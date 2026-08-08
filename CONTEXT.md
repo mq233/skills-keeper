@@ -12,6 +12,10 @@ _Avoid_: 仓库、库目录、storage
 `SKILL.md` + 资源文件组成的技能目录，是 Vault 内的最小托管单元，以 SKILL.md 为规范格式存储。
 _Avoid_: skill 包、模板
 
+**Sidecar（伴生元数据）**：
+与技能或说明文件本体并存的 JSON 元数据文件（技能为 `.skill-meta.json`、说明文件为 `.instruction-meta.json`），存储意图性扩展元数据（来源、分发目标标记、创建时间等），不污染 SKILL.md 本体；分发时排除，仅留在 Vault 内。
+_Avoid_: 配置文件、辅助文件
+
 **说明文件（Instruction）**：
 `CLAUDE.md` / `AGENTS.md` 这类工具级说明文本，按内容托管、按目标工具映射路径。
 _Avoid_: 提示词文件、配置文件
