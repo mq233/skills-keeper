@@ -10,7 +10,7 @@
 1. **目录同构**：技能目录形态与目标工具端一致（`skills/<name>/SKILL.md`），分发=目录拷贝、导入=目录识别
 2. **sidecar 格式**：JSON（`.skill-meta.json` / `.instruction-meta.json`）
 3. **职责分工**：sidecar 只存意图性扩展元数据；name/description 从 frontmatter 读取（双事实源）；hash/状态归 SQLite 快照与引擎实时比对（双事实源）
-4. **分发目标标记**：显式数组，导入/新建时默认全选已接入工具
+4. **分发目标标记**：显式数组，新建时默认全选已接入工具；导入时默认仅来源工具（被 ticket「设计导入流程」修正，2026-08-08）
 5. **说明文件**：内容实体目录托管 + 工具映射，不进技能管线
 6. **frontmatter 最小兼容集**：工具特有字段分发时注入、导入时清洗进 sidecar `extras` 备查
 
@@ -52,7 +52,7 @@ version: <语义化版本>    # 可选
 | --- | --- | --- | --- |
 | `schemaVersion` | `number` | ✓ | 当前 `1`，为演进留路 |
 | `source` | `string \| null` | ✓ | 导入来源工具 id（`claude-code`/`codex`/`workbuddy`/`trae`）；本应用新建为 `null` |
-| `targets` | `string[]` | ✓ | 分发目标标记，已接入工具的任意子集；导入/新建时初始化为**全部已接入工具**（默认全选） |
+| `targets` | `string[]` | ✓ | 分发目标标记，已接入工具的任意子集；新建时初始化为**全部已接入工具**（默认全选），导入时默认**仅来源工具**（用户可补选，见导入流程决议） |
 | `createdAt` | `string`（ISO 8601） | ✓ | 创建/导入时间 |
 | `updatedAt` | `string`（ISO 8601） | - | `targets` 等意图变更时更新 |
 | `extras` | `object` | - | 按来源工具分组的工具特有字段存档（见 §2 导入清洗） |

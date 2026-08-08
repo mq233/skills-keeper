@@ -2,6 +2,10 @@
 
 跨平台桌面软件，本地统一托管你的 AI 技能（Skills）与配置，一键分发到 Codex、Claude Code、Trae 等各 Agent 工具。
 
+## 交互要求
+
+- 涉及 `CONTEXT.md` 术语表词汇时，以条目主词 AA 为输出描述词，必要时完整输出「AA(BB)」；不使用括号内附注词或 Avoid 词替代。如「Skill（技能）」条目输出用「Skill」，需要消歧时输出「Skill（技能）」
+
 ## Agent skills
 
 ### Issue tracker
