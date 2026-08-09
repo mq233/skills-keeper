@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use skills_keeper_lib::commands::AppPaths;
@@ -16,6 +16,15 @@ use skills_keeper_lib::engine::target::ToolId;
 
 /// 环境变量类测试互斥（set_var 是全局副作用，Rust 测试并发运行）。
 static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+/// 测试内临时改 cwd 的 RAII 守卫（与 ENV_LOCK 同锁串行，失败时也恢复）。
+struct CwdGuard(PathBuf);
+
+impl Drop for CwdGuard {
+    fn drop(&mut self) {
+        let _ = std::env::set_current_dir(&self.0);
+    }
+}
 
 fn write(path: &Path, content: &str) {
     if let Some(parent) = path.parent() {
@@ -282,6 +291,27 @@ fn 环境变量覆盖路径解析() {
     let paths = AppPaths::resolve().unwrap();
     assert_eq!(paths.vault_root, vault_dir);
     assert_eq!(paths.data_dir, data_dir);
+
+    std::env::remove_var("SKILLS_KEEPER_VAULT");
+    std::env::remove_var("SKILLS_KEEPER_DATA");
+}
+
+#[test]
+fn 相对路径按cwd解析为绝对路径() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    let temp = tempfile::tempdir().unwrap();
+    let _cwd = CwdGuard(std::env::current_dir().unwrap());
+    std::env::set_current_dir(temp.path()).unwrap();
+
+    std::env::set_var("SKILLS_KEEPER_VAULT", "examples/vault");
+    std::env::remove_var("SKILLS_KEEPER_DATA");
+    let paths = AppPaths::resolve().unwrap();
+    assert_eq!(
+        paths.vault_root,
+        temp.path().join("examples/vault"),
+        "相对路径应按 cwd 转绝对"
+    );
+    assert!(paths.vault_root.is_absolute());
 
     std::env::remove_var("SKILLS_KEEPER_VAULT");
     std::env::remove_var("SKILLS_KEEPER_DATA");

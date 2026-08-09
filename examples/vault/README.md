@@ -5,11 +5,18 @@ S1 验收演示用样例 Vault（`docs/specs/s1-matrix.md` §验收演示）：
 
 ## 用法
 
+注意：`tauri dev` 下应用进程的工作目录是 `src-tauri/`，环境变量里的相对路径基于该目录解析（`AppPaths::resolve` 会转绝对路径）。推荐用绝对路径，或从 `src-tauri/` 出发的 `../examples/vault`：
+
 ```bash
-SKILLS_KEEPER_VAULT=examples/vault pnpm tauri dev
+# bash
+SKILLS_KEEPER_VAULT="$PWD/examples/vault" pnpm tauri dev
 ```
 
-（Windows PowerShell：`$env:SKILLS_KEEPER_VAULT="examples/vault"; pnpm tauri dev`）
+Windows PowerShell：
+
+```powershell
+$env:SKILLS_KEEPER_VAULT="E:\workspace\skills-keeper\examples\vault"; pnpm tauri dev
+```
 
 数据目录仍走默认 `~/.skills-keeper/`（db 文件与真实数据隔离，仅 Vault 指向样例）。
 矩阵中工具端状态来自本机真实工具目录（如实显示），WorkBuddy 显示「未接入」列。
