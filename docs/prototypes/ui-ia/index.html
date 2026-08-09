@@ -1,0 +1,562 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Skills Keeper — UI 信息架构原型（wayfinder #7）</title>
+<style>
+  /* ============ 基础 ============ */
+  :root {
+    --bg: #f4f5f7; --panel: #ffffff; --border: #e0e2e8; --text: #1f2430; --muted: #6b7280;
+    --blue: #2563eb; --green: #16a34a; --amber: #d97706; --red: #dc2626; --gray: #9ca3af;
+    --ok-bg: #ecfdf5; --pending-bg: #fffbeb; --modified-bg: #fef2f2; --missing-bg: #f3f4f6;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: "Microsoft YaHei", "PingFang SC", system-ui, sans-serif; background: var(--bg); color: var(--text); font-size: 14px; }
+  .badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 10px; font-size: 12px; white-space: nowrap; }
+  .badge .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+  .st-consistent { background: var(--ok-bg); color: var(--green); }
+  .st-pending { background: var(--pending-bg); color: var(--amber); }
+  .st-modified { background: var(--modified-bg); color: var(--red); }
+  .st-missing { background: var(--missing-bg); color: var(--gray); }
+  .btn { border: 1px solid var(--border); background: var(--panel); color: var(--text); padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+  .btn:hover { border-color: var(--blue); color: var(--blue); }
+  .btn.primary { background: var(--blue); border-color: var(--blue); color: #fff; }
+  .btn.primary:hover { opacity: .9; }
+  .muted { color: var(--muted); }
+  h1 { font-size: 16px; } h2 { font-size: 15px; } h3 { font-size: 13px; }
+  .view-title { font-size: 17px; font-weight: 600; margin-bottom: 4px; }
+  .view-sub { color: var(--muted); font-size: 12px; margin-bottom: 14px; }
+
+  /* ============ 通用 diff 视图 ============ */
+  .diff { font-family: Consolas, "Courier New", monospace; font-size: 12px; line-height: 1.7; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+  .diff .dline { display: flex; gap: 8px; padding: 0 8px; }
+  .diff .del { background: #fef2f2; color: #b91c1c; }
+  .diff .add { background: #ecfdf5; color: #15803d; }
+  .diff .ctx { background: #fff; color: var(--muted); }
+  .diff .sign { width: 12px; flex-shrink: 0; }
+  .diff-pane { margin-bottom: 8px; }
+  .diff-pane .pane-title { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+
+  /* ============ 浮动变体切换条 ============ */
+  #switcher { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); z-index: 999;
+    display: flex; align-items: center; gap: 12px; background: #111827; color: #fff; padding: 8px 16px;
+    border-radius: 999px; box-shadow: 0 4px 16px rgba(0,0,0,.35); font-size: 13px; }
+  #switcher button { background: none; border: none; color: #fff; font-size: 18px; cursor: pointer; padding: 0 6px; }
+  #switcher .label { min-width: 150px; text-align: center; }
+  #switcher .hint { color: #9ca3af; font-size: 11px; }
+
+  /* ================================================================
+     Variant A — 表格矩阵优先（Spreadsheet）：左侧导航 + 大矩阵表
+     ================================================================ */
+  .va { display: grid; grid-template-columns: 200px 1fr; min-height: 100vh; }
+  .va .side { background: #1f2430; color: #cbd5e1; padding: 16px 0; }
+  .va .side .logo { padding: 0 16px 16px; font-weight: 700; color: #fff; font-size: 15px; border-bottom: 1px solid #374151; margin-bottom: 10px; }
+  .va .side nav a { display: flex; justify-content: space-between; align-items: center; padding: 9px 16px; color: #cbd5e1; text-decoration: none; font-size: 13px; cursor: pointer; }
+  .va .side nav a:hover { background: #2d3342; }
+  .va .side nav a.active { background: var(--blue); color: #fff; }
+  .va .side nav .count { background: #374151; border-radius: 8px; padding: 0 7px; font-size: 11px; }
+  .va .main { padding: 20px 24px; }
+  .va .toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
+  .va .toolbar .spacer { flex: 1; }
+  .va table.matrix { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .va table.matrix th, .va table.matrix td { border-bottom: 1px solid var(--border); padding: 9px 12px; text-align: left; vertical-align: middle; }
+  .va table.matrix thead th { background: #f9fafb; font-size: 12px; color: var(--muted); }
+  .va table.matrix tr.expandable { cursor: pointer; }
+  .va table.matrix tr.expandable:hover { background: #f8fafc; }
+  .va .row-detail { display: none; background: #fbfbfd; }
+  .va .row-detail.open { display: table-row; }
+  .va .row-detail td { padding: 12px 16px 12px 40px; }
+  .va .sel { accent-color: var(--blue); }
+  .va .summary { display: flex; gap: 14px; font-size: 12px; color: var(--muted); margin-bottom: 14px; }
+  .va .summary b { color: var(--text); }
+  /* 展开行：diff 占满整行（确认修正：不再双栏、不展示分发目标面板） */
+  .va .fulldiff { max-width: 100%; }
+  .va .fulldiff .diff { width: 100%; }
+  .va .fulldiff .diff .dline { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .va .fulldiff .diff .dline:hover { white-space: normal; }
+
+  /* ================================================================
+     Variant B — 技能卡片墙（Card wall + drawer）：顶部 tab + 卡片 + 右侧抽屉
+     ================================================================ */
+  .vb { min-height: 100vh; display: flex; flex-direction: column; }
+  .vb .top { display: flex; align-items: center; gap: 20px; background: var(--panel); border-bottom: 1px solid var(--border); padding: 0 20px; height: 52px; }
+  .vb .top .logo { font-weight: 700; font-size: 15px; }
+  .vb .top nav { display: flex; gap: 4px; }
+  .vb .top nav a { padding: 16px 14px 14px; font-size: 13px; color: var(--muted); cursor: pointer; text-decoration: none; border-bottom: 2px solid transparent; }
+  .vb .top nav a.active { color: var(--blue); border-bottom-color: var(--blue); }
+  .vb .top .spacer { flex: 1; }
+  .vb .cards { padding: 20px; display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
+  .vb .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px; cursor: pointer; transition: box-shadow .15s; }
+  .vb .card:hover { box-shadow: 0 4px 14px rgba(0,0,0,.08); }
+  .vb .card .head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .vb .card .name { font-weight: 600; }
+  .vb .card .desc { color: var(--muted); font-size: 12px; margin-bottom: 10px; min-height: 32px; }
+  .vb .card .targets { display: flex; gap: 6px; flex-wrap: wrap; }
+  .vb .card .target { display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--muted); padding: 2px 6px; border-radius: 6px; background: #f3f4f6; }
+  .vb .card .target .dot { width: 6px; height: 6px; border-radius: 50%; }
+  .vb .drawer { position: fixed; top: 0; right: 0; bottom: 0; width: 480px; max-width: 92vw; background: var(--panel);
+    border-left: 1px solid var(--border); box-shadow: -8px 0 24px rgba(0,0,0,.08); transform: translateX(105%); transition: transform .2s; z-index: 50; overflow-y: auto; }
+  .vb .drawer.open { transform: none; }
+  .vb .drawer .dhead { display: flex; align-items: center; gap: 10px; padding: 16px 20px; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--panel); }
+  .vb .drawer .dbody { padding: 16px 20px; }
+  .vb .drawer .close { margin-left: auto; }
+  .batchbar { position: fixed; bottom: 0; left: 0; right: 0; display: none; align-items: center; gap: 12px; background: #1f2430; color: #fff;
+    padding: 10px 24px; z-index: 40; }
+  .batchbar.show { display: flex; }
+  .batchbar .btn { background: #374151; border-color: #374151; color: #fff; }
+  .batchbar .btn.primary { background: var(--blue); border-color: var(--blue); }
+  .vb .tabs-in-card { display: flex; gap: 8px; margin-bottom: 10px; }
+  .vb .tabs-in-card button { border: none; background: none; color: var(--muted); cursor: pointer; padding: 4px 0; font-size: 13px; border-bottom: 2px solid transparent; }
+  .vb .tabs-in-card button.active { color: var(--blue); border-bottom-color: var(--blue); }
+
+  /* ================================================================
+     Variant C — 工具泳道时间线（Tool-centric）：工具为一级导航 + 快照时间线
+     ================================================================ */
+  .vc { display: grid; grid-template-columns: 170px 1fr 300px; min-height: 100vh; }
+  .vc .rail { background: #111827; color: #cbd5e1; padding: 14px 0; }
+  .vc .rail .logo { padding: 0 14px 12px; font-weight: 700; color: #fff; border-bottom: 1px solid #2d3342; margin-bottom: 8px; font-size: 14px; }
+  .vc .rail .group-label { padding: 10px 14px 4px; font-size: 11px; color: #6b7280; text-transform: uppercase; }
+  .vc .rail nav a { display: flex; align-items: center; gap: 8px; padding: 8px 14px; font-size: 13px; color: #cbd5e1; text-decoration: none; cursor: pointer; }
+  .vc .rail nav a:hover { background: #1f2937; }
+  .vc .rail nav a.active { background: var(--blue); color: #fff; }
+  .vc .rail nav a .tool-ico { width: 8px; height: 8px; border-radius: 50%; }
+  .vc .main { padding: 20px; }
+  .vc .deploy-list { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; }
+  .vc .deploy-item { display: flex; align-items: center; gap: 12px; padding: 11px 14px; border-bottom: 1px solid var(--border); cursor: pointer; }
+  .vc .deploy-item:last-child { border-bottom: none; }
+  .vc .deploy-item:hover { background: #f8fafc; }
+  .vc .deploy-item .time { margin-left: auto; color: var(--muted); font-size: 12px; }
+  .vc .deploy-item .hash { color: var(--muted); font-size: 11px; font-family: Consolas, monospace; }
+  .vc .inline-diff { padding: 12px 14px; border-top: 1px dashed var(--border); background: #fbfbfd; }
+  .vc .timeline { background: var(--panel); border-left: 1px solid var(--border); padding: 20px 16px; }
+  .vc .tl-item { position: relative; padding: 0 0 18px 18px; border-left: 2px solid var(--border); }
+  .vc .tl-item:last-child { border-left-color: transparent; }
+  .vc .tl-item::before { content: ""; position: absolute; left: -6px; top: 2px; width: 10px; height: 10px; border-radius: 50%; background: var(--border); }
+  .vc .tl-item.manual::before { background: var(--blue); }
+  .vc .tl-item.auto::before { background: var(--amber); }
+  .vc .tl-item .tl-title { font-size: 13px; font-weight: 600; }
+  .vc .tl-item .tl-meta { font-size: 11px; color: var(--muted); margin: 2px 0 6px; }
+  .vc .tl-item .btn { font-size: 12px; padding: 3px 10px; }
+  .vc .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
+  .vc .stat-card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 12px; }
+  .vc .stat-card .num { font-size: 22px; font-weight: 700; }
+  .vc .stat-card .lbl { font-size: 12px; color: var(--muted); }
+
+  /* ============ 次级视图（导入向导 / 快照 / 设置）通用 ============ */
+  .wizard { max-width: 760px; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; }
+  .wizard .wstep { padding: 16px 20px; border-bottom: 1px solid var(--border); }
+  .wizard .wstep:last-child { border-bottom: none; }
+  .wizard .wbar { display: flex; gap: 6px; padding: 0 20px 14px; }
+  .wizard .wbar span { font-size: 12px; color: var(--muted); }
+  .wizard .wbar span.done { color: var(--green); }
+  .wizard .wbar span.cur { color: var(--blue); font-weight: 600; }
+  .wizard table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .wizard table td { padding: 8px 10px; border-bottom: 1px solid var(--border); }
+  .wizard table tr.dup td { color: var(--muted); }
+  .wizard table tr.conflict td { background: #fffbeb; }
+  .settings-list { max-width: 640px; }
+  .settings-item { display: flex; align-items: center; gap: 14px; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 12px 16px; margin-bottom: 10px; }
+  .settings-item .info { flex: 1; }
+  .settings-item .path { font-family: Consolas, monospace; font-size: 12px; color: var(--muted); }
+  .settings-item .warn { color: var(--amber); font-size: 12px; }
+  .toggle { width: 36px; height: 20px; border-radius: 10px; background: #d1d5db; position: relative; cursor: pointer; flex-shrink: 0; }
+  .toggle::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: left .15s; }
+  .toggle.on { background: var(--green); }
+  .toggle.on::after { left: 18px; }
+</style>
+</head>
+<body>
+
+<!-- 原型说明（定位注释，方便快速阅读）：
+     三种信息架构变体，通过 ?variant=A|B|C 切换，浮动底栏 + ←/→ 键循环。
+     A 表格矩阵优先 / B 卡片墙+抽屉 / C 工具泳道+时间线。
+     i18n 预留：文案均标 data-i18n key（中文先行，key 为语义英文标识）。 -->
+
+<div id="app"></div>
+<div id="switcher">
+  <button id="prev" title="上一个变体">←</button>
+  <div class="label" id="vlabel">A — 表格矩阵优先</div>
+  <button id="next" title="下一个变体">→</button>
+  <span class="hint">←/→ 切换</span>
+</div>
+
+<script>
+"use strict";
+/* ================= 模拟数据（与 sample-vault 对齐） ================= */
+
+const TOOLS = [
+  { id: "claude-code", name: "Claude Code", short: "CC", color: "#e8796d", path: "~/.claude/skills/", enabled: true },
+  { id: "codex", name: "Codex", short: "CX", color: "#e2e8f0", path: "~/.agents/skills/", enabled: true },
+  { id: "workbuddy", name: "WorkBuddy", short: "WB", color: "#7dd3fc", path: null, enabled: false, note: "未配置路径（社区口径 ~/.workbuddy/skills/，需实测）" },
+  { id: "trae", name: "Trae", short: "TR", color: "#86efac", path: "~/.trae/skills/（CN 版 ~/.trae-cn/skills/）", enabled: true },
+];
+
+// 状态：consistent 一致 / pending 待分发 / modified 被工具修改 / missing 缺失 / n/a 未接入
+const SKILLS = [
+  {
+    slug: "commit-message", name: "commit-message", version: "1.2.0",
+    desc: "按 Conventional Commits 生成规范提交信息，支持 scope 与 breaking change 标记。",
+    targets: { "claude-code": "consistent", "codex": "consistent", "workbuddy": "n/a", "trae": "consistent" },
+    diff: null,
+  },
+  {
+    slug: "frontend-review", name: "frontend-review", version: "0.9.1",
+    desc: "按 Web 界面指南与可访问性规范审查前端 UI 代码，输出结构化问题清单。",
+    targets: { "claude-code": "consistent", "codex": "modified", "workbuddy": "n/a", "trae": "consistent" },
+    diff: {
+      tool: "codex",
+      reason: "Codex 端被外部工具修改（description 与 allowed-tools 被改动）",
+      hunks: [
+        { del: "description: 按 Web 界面指南与可访问性规范审查前端 UI 代码。", add: "description: 审查前端 UI 代码的可访问性与规范符合度。", ctx: "version: 0.9.1" },
+        { del: "", add: "allowed-tools: [bash, read, edit]", ctx: "---" },
+      ],
+    },
+  },
+  {
+    slug: "meeting-notes", name: "meeting-notes", version: "1.0.0",
+    desc: "将会议录音转写整理为结构化纪要：决议、行动项、负责人与截止日期。",
+    targets: { "claude-code": "pending", "codex": "consistent", "workbuddy": "n/a", "trae": "pending" },
+    diff: { tool: "claude-code", reason: "Vault 侧更新至 1.0.0（新增行动项模板），尚未分发", hunks: [] },
+  },
+  {
+    slug: "code-review", name: "code-review", version: "0.1.0",
+    desc: "本地代码评审助手：提交差异扫描与风险点标注。（新建技能，尚未分发）",
+    targets: { "claude-code": "missing", "codex": "missing", "workbuddy": "n/a", "trae": "missing" },
+    diff: null,
+  },
+];
+
+const SNAPSHOTS = [
+  { id: 12, tool: "Codex", reason: "manual", when: "今天 14:32", n: 3 },
+  { id: 11, tool: "Codex", reason: "auto", when: "今天 11:05", n: 3 },
+  { id: 10, tool: "Claude Code", reason: "auto", when: "昨天 18:41", n: 3 },
+  { id: 9, tool: "Trae", reason: "auto", when: "昨天 16:20", n: 3 },
+  { id: 8, tool: "Codex", reason: "auto", when: "08-07 10:12", n: 3 },
+];
+
+const IMPORT_SRC = { tool: "Codex", scanned_at: "今天 15:02", items: [
+  { slug: "commit-message", kind: "dup", desc: "与 Vault 同内容，自动跳过" },
+  { slug: "frontend-review", kind: "conflict", desc: "同名不同内容（Codex 端有额外 allowed-tools 字段），默认跳过，可选 覆盖 / 改名导入" },
+  { slug: "terminal-tips", kind: "ok", desc: "合规，可导入（将默认标记仅 Codex）" },
+  { slug: "my-snippets", kind: "invalid", desc: "缺 frontmatter name/description，禁勾选，请先在 Codex 中修复" },
+  { slug: "node_modules", kind: "skip", desc: "无 SKILL.md，跳过" },
+]};
+
+const STATUS_LABEL = { consistent: "一致", pending: "待分发", modified: "被工具修改", missing: "缺失", "n/a": "未接入" };
+
+function toolName(id) { return TOOLS.find(t => t.id === id).name; }
+function i18n(key, text) { return '<span data-i18n="' + key + '">' + text + "</span>"; }
+
+/* ================= 状态徽章 ================= */
+function badge(st) {
+  if (st === "n/a") return '<span class="badge st-missing">未接入</span>';
+  const map = { consistent: ["st-consistent", "一致"], pending: ["st-pending", "待分发"], modified: ["st-modified", "被工具修改"], missing: ["st-missing", "缺失"] };
+  const [cls, label] = map[st];
+  return '<span class="badge ' + cls + '"><span class="dot"></span>' + label + "</span>";
+}
+
+/* ================= diff 渲染 ================= */
+function diffBlock(diff) {
+  if (!diff) return "";
+  if (!diff.hunks.length) return '<p class="muted" style="font-size:12px">' + diff.reason + '</p>';
+  return '<div class="diff-pane"><div class="pane-title">' + diff.reason + '</div>' +
+    '<div class="diff">' + diff.hunks.map(h => (
+      (h.del ? '<div class="dline del"><span class="sign">-</span><span>' + h.del + "</span></div>" : "") +
+      (h.add ? '<div class="dline add"><span class="sign">+</span><span>' + h.add + "</span></div>" : "") +
+      (h.ctx ? '<div class="dline ctx"><span class="sign"> </span><span>' + h.ctx + "</span></div>" : "")
+    )).join("") + "</div></div>";
+}
+
+/* ================= Variant A — 表格矩阵优先（最终形态：确认修正版） ================= */
+function viewA() {
+  let rows = "";
+  for (const s of SKILLS) {
+    const cells = TOOLS.map(t => "<td>" + badge(s.targets[t.id]) + "</td>").join("");
+    const diffTool = s.diff ? toolName(s.diff.tool) : "未分发/无差异";
+    rows += '<tr class="expandable" data-slug="' + s.slug + '"><td><input type="checkbox" class="sel" data-slug="' + s.slug + '" onclick="event.stopPropagation()"></td><td><b>' + s.name + '</b> <span class="muted" style="font-size:11px">v' + s.version + '</span></td>' + cells + "<td><span class=\"muted\" style=\"font-size:11px\">展开 ▾</span></td></tr>" +
+      '<tr class="row-detail" data-detail="' + s.slug + '"><td colspan="7"><div class="fulldiff">' +
+      '<h3 style="margin-bottom:8px">内容差异（' + diffTool + '）</h3>' + diffBlock(s.diff) + '</div></td></tr>';
+  }
+  const summary = [
+    ['<b>' + SKILLS.filter(s => Object.values(s.targets).includes("modified")).length + '</b> 被工具修改', "#dc2626"],
+    ['<b>' + SKILLS.filter(s => Object.values(s.targets).includes("pending")).length + '</b> 待分发', "#d97706"],
+    ['<b>' + SKILLS.filter(s => Object.values(s.targets).includes("missing")).length + '</b> 缺失', "#9ca3af"],
+  ].map(([html]) => "<span style=\"color:#dc2626\">" + html + "</span>").join(" ");
+  // 工具列头部：分发全部按钮（一键全发到该列）
+  const ths = TOOLS.map(t =>
+    "<th>" + t.name + (t.path ? "" : " ⚠") +
+    (t.enabled
+      ? '<br><button class="btn col-deploy" data-tool="' + t.id + '" style="font-size:11px;padding:2px 8px;margin-top:5px">⇥ 分发全部</button>'
+      : "") + "</th>").join("");
+  return `<div class="va">
+    <aside class="side">
+      <div class="logo">Skills Keeper</div>
+      <nav>
+        <a class="active" data-nav="library">📚 技能库</a>
+        <a data-nav="import">📥 导入</a>
+        <a data-nav="snapshots">🕓 快照时间线</a>
+        <a data-nav="settings">⚙️ 设置</a>
+      </nav>
+    </aside>
+    <main class="main">
+      <div class="view-title" data-i18n="view.library">技能库 — 状态矩阵</div>
+      <div class="view-sub">技能 × 目标工具匹配状态；展开行查看内容差异；列头「分发全部」= 该工具全部技能一键分发</div>
+      <div class="toolbar">
+        <button class="btn">⟳ 扫描</button>
+        <span class="spacer"></span>
+        <span class="summary">${summary}</span>
+      </div>
+      <table class="matrix">
+        <thead><tr><th style="width:28px"></th><th>技能</th>` +
+          ths +
+          '<th style="width:60px"></th></tr></thead>' +
+          `<tbody>${rows}</tbody>` +
+        `</table>
+      <p class="muted" style="margin-top:10px;font-size:12px">⚠ WorkBuddy 未配置路径，状态列恒为「未接入」；到「设置」页配置后接入。快照与回滚入口见侧栏「快照时间线」。</p>
+      <div class="batchbar" id="batchbar-va"><span id="batchcount-va">已选 0 项</span><span style="flex:1"></span>
+        <button class="btn" id="b-cancel-va">取消</button><button class="btn primary" id="b-deploy-va">分发所选</button></div>
+    </main>
+  </div>`;
+}
+
+/* ================= Variant B — 卡片墙 + 抽屉 ================= */
+function viewB() {
+  const cards = SKILLS.map(s => {
+    const targets = TOOLS.filter(t => t.enabled).map(t => {
+      const st = s.targets[t.id];
+      const colorMap = { consistent: "#16a34a", pending: "#d97706", modified: "#dc2626", missing: "#9ca3af" };
+      return '<span class="target"><span class="dot" style="background:' + colorMap[st] + '"></span>' + t.short + "</span>";
+    }).join("");
+    return `<div class="card" data-slug="${s.slug}" data-name="${s.name}" data-desc="${s.desc}">
+      <div class="head"><span class="name">${s.name}</span> ${badge(anyWorst(s.targets))}</div>
+      <div class="desc">${s.desc}</div>
+      <div class="targets">${targets}</div>
+      <div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap">
+        <button class="btn" style="font-size:12px;padding:3px 10px" data-act="deploy" data-slug="${s.slug}" onclick="event.stopPropagation()">分发</button>
+        <button class="btn" style="font-size:12px;padding:3px 10px" data-act="diff" data-slug="${s.slug}" onclick="event.stopPropagation()">查看差异</button>
+      </div>
+    </div>`;
+  }).join("");
+
+  return `<div class="vb">
+    <header class="top">
+      <div class="logo">Skills Keeper</div>
+      <nav>
+        <a class="active" data-nav="library">技能库</a>
+        <a data-nav="import">导入</a>
+        <a data-nav="snapshots">快照时间线</a>
+        <a data-nav="settings">设置</a>
+      </nav>
+      <span class="spacer"></span>
+      <button class="btn">⟳ 扫描</button>
+    </header>
+    <main class="cards" data-i18n="view.library" id="cardwall">${cards}</main>
+    <div class="batchbar" id="batchbar"><span id="batchcount">已选 0 项</span><span class="spacer" style="flex:1"></span>
+      <button class="btn" id="b-cancel">取消</button><button class="btn primary" id="b-deploy">分发到所选工具</button></div>
+
+    <aside class="drawer" id="drawer">
+      <div class="dhead"><h2 id="drawer-name"></h2> <button class="btn close" id="drawer-close">✕</button></div>
+      <div class="dbody">
+        <div class="tabs-in-card"><button class="active" data-dtab="matrix">状态矩阵</button><button data-dtab="diff">内容差异</button><button data-dtab="targets">分发目标</button></div>
+        <div id="dtab-matrix"></div>
+        <div id="dtab-diff" style="display:none"></div>
+        <div id="dtab-targets" style="display:none"></div>
+      </div>
+    </aside>
+  </div>`;
+}
+function anyWorst(t) {
+  const order = ["modified", "pending", "missing", "consistent"];
+  for (const k of order) if (Object.values(t).includes(k)) return k;
+  return "consistent";
+}
+
+/* ================= Variant C — 工具泳道 + 时间线 ================= */
+function viewC() {
+  const rail = `<aside class="rail">
+    <div class="logo">Skills Keeper</div>
+    <div class="group-label">库</div>
+    <nav><a class="active" data-nav="library">仪表盘</a></nav>
+    <div class="group-label">目标工具</div>
+    <nav>` + TOOLS.filter(t => t.enabled).map(t => '<a data-tool="' + t.id + '" data-nav="tool"><span class="tool-ico" style="background:' + t.color + '"></span>' + t.name + "</a>").join("") + "</nav>" +
+    `<div class="group-label">系统</div><nav><a data-nav="snapshots">🕓 快照时间线</a><a data-nav="settings">⚙️ 设置</a></nav></aside>`;
+
+  const stats = `<div class="stats">
+    <div class="stat-card"><div class="num" style="color:#16a34a">3</div><div class="lbl">一致</div></div>
+    <div class="stat-card"><div class="num" style="color:#d97706">2</div><div class="lbl">待分发</div></div>
+    <div class="stat-card"><div class="num" style="color:#dc2626">1</div><div class="lbl">被工具修改</div></div>
+    <div class="stat-card"><div class="num" style="color:#9ca3af">3</div><div class="lbl">缺失</div></div>
+  </div>`;
+
+  const list = `<div class="deploy-list" id="deploylist">` + SKILLS.map(s =>
+    `<div class="deploy-item" data-slug="${s.slug}"><span class="name">${s.name}</span>${badge(s.targets["codex"])}
+      <span class="time">上次分发：昨天 16:20</span></div><div class="inline-diff" style="display:none" data-diff="${s.slug}">` +
+    diffBlock(s.diff) + "</div>").join("") + "</div>";
+
+  const tl = `<div class="timeline"><h3 style="margin-bottom:12px">快照时间线（Codex）</h3>` +
+    SNAPSHOTS.filter(s => s.tool === "Codex").map(s =>
+      `<div class="tl-item ${s.reason}"><div class="tl-title">${s.reason === "manual" ? "手动快照" : "分发前自动快照"}</div>
+       <div class="tl-meta">${s.when} · 技能 ${s.n} 个</div><button class="btn">回滚到此</button></div>`).join("") + "</div>";
+
+  return `<div class="vc">${rail}<main class="main"><div class="view-title" data-i18n="view.library">仪表盘 — 全部技能 × 目标工具</div>
+    <div class="view-sub">按工具查看部署详情与差异；右侧为所选工具的快照时间线</div>${stats}${list}</main>${tl}</div>`;
+}
+
+/* ================= 次级视图（三变体共用内容，随框架呈现） ================= */
+function viewImport() {
+  const rows = IMPORT_SRC.items.map(it => {
+    let sel = "";
+    if (it.kind === "ok") sel = '<td><input type="checkbox" class="sel" checked></td>';
+    else if (it.kind === "conflict") sel = '<td><input type="checkbox" class="sel" disabled><select style="font-size:12px"><option>跳过（默认）</option><option>覆盖</option><option>改名导入</option></select></td>';
+    else if (it.kind === "dup") sel = '<td><input type="checkbox" disabled checked></td>';
+    else if (it.kind === "invalid") sel = '<td><input type="checkbox" disabled></td>';
+    else sel = "<td></td>";
+    const cls = it.kind === "conflict" ? ' class="conflict"' : (it.kind === "dup" ? ' class="dup"' : "");
+    return `<tr${cls}>${sel}<td><b>${it.slug}</b></td><td style="font-size:12px;color:var(--muted)">${it.desc}</td></tr>`;
+  }).join("");
+  return `<div class="main" style="padding:24px">
+    <div class="view-title" data-i18n="view.import">导入向导</div>
+    <div class="view-sub">从目标工具目录识别 → 勾选 → 导入（只读源目录，工具端零副作用）</div>
+    <div class="wizard">
+      <div class="wbar"><span class="done">① 选择来源工具</span><span class="cur">② 识别结果</span><span>③ 导入</span></div>
+      <div class="wstep">
+        <div style="margin-bottom:10px">来源工具：<b>Codex</b>（~/.agents/skills/）· 扫描于今天 15:02</div>
+        <table><thead><tr><td style="width:36px"></td><td>目录</td><td>说明</td></tr></thead><tbody>${rows}</tbody></table>
+        <p class="muted" style="font-size:12px;margin-top:8px">已跳过 1 个非技能项（node_modules）；不合规技能需在 Codex 中修复后方可导入。</p>
+      </div>
+      <div class="wstep" style="display:flex;gap:10px;justify-content:flex-end">
+        <button class="btn">上一步</button><button class="btn primary">导入所选（1）</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+function viewSnapshots() {
+  return `<div class="main" style="padding:24px">
+    <div class="view-title" data-i18n="view.snapshots">快照时间线</div>
+    <div class="view-sub">分发前自动保存 + 手动触发；保留最近 10 份（可配置）；回滚 = 恢复到快照时的工具端状态</div>
+    <div class="settings-list">` + SNAPSHOTS.map(s =>
+      `<div class="settings-item"><span class="badge ${s.reason === "manual" ? "st-pending" : "st-consistent"}">${s.reason === "manual" ? "手动" : "自动"}</span>
+        <div class="info"><b>${s.tool}</b> <span class="muted">· ${s.when} · ${s.n} 个技能</span></div>
+        <button class="btn primary">回滚</button></div>`).join("") + "</div></div>";
+}
+
+function viewSettings() {
+  const items = TOOLS.map(t => `
+    <div class="settings-item">
+      <div class="toggle ${t.enabled ? "on" : ""}" data-tool="${t.id}" style="cursor:pointer"></div>
+      <div class="info"><b>${t.name}</b><br><span class="path">${t.path || "未配置"}</span>
+        ${t.note ? '<div class="warn">⚠ ' + t.note + "</div>" : ""}</div>
+      <button class="btn">编辑路径</button>
+    </div>`).join("");
+  return `<div class="main" style="padding:24px">
+    <div class="view-title" data-i18n="view.settings">设置</div>
+    <div class="view-sub">启用/停用目标工具、配置目标路径；停用后该列从状态矩阵移除</div>
+    <div class="settings-list">${items}</div>
+    <div class="settings-item"><div class="info"><b>快照保留数量</b><br><span class="muted">超出后自动淘汰最旧快照</span></div><select style="padding:4px"><option>10（默认）</option><option>5</option><option>20</option><option>50</option></select></div>
+  </div>`;
+}
+
+/* ================= 视图分发器 ================= */
+const VIEWS = {
+  library: { A: viewA, B: viewB, C: viewC },
+  import: { A: viewImport, B: viewImport, C: viewImport },
+  snapshots: { A: viewSnapshots, B: viewSnapshots, C: viewSnapshots },
+  settings: { A: viewSettings, B: viewSettings, C: viewSettings },
+};
+let variant = "A", currentView = "library";
+
+function render() {
+  document.getElementById("app").innerHTML = VIEWS[currentView][variant]();
+  document.getElementById("vlabel").textContent =
+    { A: "A — 表格矩阵优先", B: "B — 卡片墙 + 抽屉", C: "C — 工具泳道 + 时间线" }[variant];
+  bindEvents();
+  if (variant === "A") bindVA();
+  if (variant === "B") bindVB();
+  if (variant === "C") bindVC();
+}
+
+function setVariant(v) { variant = v; history.replaceState(null, "", "?variant=" + v); render(); }
+
+/* 次级视图导航（所有变体通用：点 nav 切换视图） */
+function bindEvents() {
+  document.querySelectorAll("[data-nav]").forEach(a => a.addEventListener("click", () => {
+    currentView = a.dataset.nav;
+    document.querySelectorAll("[data-nav]").forEach(x => x.classList.toggle("active", x === a));
+    render();
+  }));
+}
+
+/* Variant A 交互：行展开 diff + 勾选批量条 + 列头分发全部 */
+function bindVA() {
+  document.querySelectorAll("tr.expandable").forEach(tr => tr.addEventListener("click", () => {
+    const det = document.querySelector('tr.row-detail[data-detail="' + tr.dataset.slug + '"]');
+    det.classList.toggle("open");
+  }));
+  // 勾选 → 底部批量条
+  const bar = document.getElementById("batchbar-va");
+  const count = document.getElementById("batchcount-va");
+  function refreshBatch() {
+    const n = document.querySelectorAll('input.sel:checked').length;
+    count.textContent = "已选 " + n + " 项";
+    bar.classList.toggle("show", n > 0);
+  }
+  document.querySelectorAll("input.sel").forEach(cb => cb.addEventListener("change", refreshBatch));
+  document.getElementById("b-cancel-va").addEventListener("click", () => {
+    document.querySelectorAll("input.sel:checked").forEach(cb => cb.checked = false);
+    refreshBatch();
+  });
+  document.getElementById("b-deploy-va").addEventListener("click", () => {
+    const n = document.querySelectorAll("input.sel:checked").length;
+    if (n > 0) { alert("原型演示：将分发所选 " + n + " 个技能到其 targets 标记的工具"); }
+  });
+  // 列头「分发全部」→ 该工具一键分发全部技能
+  document.querySelectorAll(".col-deploy").forEach(btn => btn.addEventListener("click", () => {
+    const t = btn.dataset.tool;
+    const name = TOOLS.find(x => x.id === t).name;
+    alert("原型演示：一键分发全部技能到 " + name + "（分发前自动扫描 + 快照）");
+  }));
+}
+/* Variant B 交互：卡片 → 抽屉；分发勾选 → 批量条 */
+function bindVB() {
+  document.querySelectorAll(".card").forEach(c => c.addEventListener("click", () => openDrawer(c.dataset.slug)));
+  document.getElementById("drawer-close").addEventListener("click", () => document.getElementById("drawer").classList.remove("open"));
+  document.querySelectorAll(".drawer .tabs-in-card button").forEach(b => b.addEventListener("click", () => {
+    document.querySelectorAll(".drawer .tabs-in-card button").forEach(x => x.classList.toggle("active", x === b));
+    ["matrix", "diff", "targets"].forEach(t => document.getElementById("dtab-" + t).style.display = t === b.dataset.dtab ? "" : "none");
+  }));
+}
+function openDrawer(slug) {
+  const s = SKILLS.find(x => x.slug === slug);
+  document.getElementById("drawer-name").textContent = s.name;
+  document.getElementById("dtab-matrix").innerHTML = TOOLS.filter(t => t.enabled).map(t =>
+    '<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid var(--border)"><span>' + t.name + "</span>" + badge(s.targets[t.id]) + "</div>").join("");
+  document.getElementById("dtab-diff").innerHTML = diffBlock(s.diff) || '<p class="muted" style="font-size:12px">无差异</p>';
+  document.getElementById("dtab-targets").innerHTML = TOOLS.filter(t => t.enabled).map(t =>
+    '<label style="display:flex;gap:8px;padding:7px 0;border-bottom:1px solid var(--border);align-items:center"><input type="checkbox" checked> ' + t.name + "</label>").join("");
+  document.getElementById("drawer").classList.add("open");
+}
+/* Variant C 交互：行展开 inline diff */
+function bindVC() {
+  document.querySelectorAll(".deploy-item").forEach(it => it.addEventListener("click", () => {
+    const d = document.querySelector('[data-diff="' + it.dataset.slug + '"]');
+    d.style.display = d.style.display === "none" ? "" : "none";
+  }));
+}
+
+/* ================= 切换条（浮动底栏） ================= */
+const NAMES = ["A", "B", "C"];
+document.getElementById("prev").addEventListener("click", () => setVariant(NAMES[(NAMES.indexOf(variant) + NAMES.length - 1) % NAMES.length]));
+document.getElementById("next").addEventListener("click", () => setVariant(NAMES[(NAMES.indexOf(variant) + 1) % NAMES.length]));
+window.addEventListener("keydown", e => {
+  if (["INPUT", "TEXTAREA"].includes(document.activeElement.tagName) || document.activeElement.isContentEditable) return;
+  if (e.key === "ArrowLeft") setVariant(NAMES[(NAMES.indexOf(variant) + NAMES.length - 1) % NAMES.length]);
+  if (e.key === "ArrowRight") setVariant(NAMES[(NAMES.indexOf(variant) + 1) % NAMES.length]);
+});
+const fromUrl = new URLSearchParams(location.search).get("variant");
+if (fromUrl && NAMES.includes(fromUrl)) variant = fromUrl;
+render();
+</script>
+</body>
+</html>

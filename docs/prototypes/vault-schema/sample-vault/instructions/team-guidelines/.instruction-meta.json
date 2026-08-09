@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "targets": {
+    "claude-code": { "filename": "CLAUDE.md", "path": "~/.claude/CLAUDE.md" },
+    "codex": { "filename": "AGENTS.md", "path": "~/.codex/AGENTS.md" },
+    "workbuddy": null,
+    "trae": { "filename": "AGENTS.md", "path": "~/.trae-cn/rules/AGENTS.md" }
+  },
+  "createdAt": "2026-08-01T09:00:00Z"
+}

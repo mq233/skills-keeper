@@ -1,0 +1,6 @@
+# 权威文档、调研/原型资产与 AI 规范文档：保持原样，避免 prettier 重排造成噪音 diff
+docs/
+CLAUDE.md
+CONTEXT.md
+# Rust 侧整体不归 prettier 管（含 gen/ target 生成物）
+src-tauri/

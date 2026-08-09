@@ -1,0 +1,118 @@
+# CI 三段式（docs/technical-plan.md §7）
+# - test-rust：三平台矩阵，rust-cache + fmt --check + clippy -D warnings + cargo test
+# - test-frontend：ubuntu 单跑，pnpm lint + test + build
+# - build-tauri：三平台验证可构建（不签名不发布），仅在 master push 触发
+# 依赖安装与版本依据 docs/research/ci-build-deps.md（wayfinder #13）
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test-rust:
+    name: test-rust (${{ matrix.platform }})
+    runs-on: ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: ubuntu-22.04
+          - platform: windows-latest
+          - platform: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # 必须先装工具链再恢复缓存（cache key 依赖当前 rustc 版本）
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: fmt --check
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml --check
+
+      - name: clippy -D warnings
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+
+      - name: cargo test
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
+  test-frontend:
+    name: test-frontend
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10
+          cache: true
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm lint
+      - run: pnpm test
+      - run: pnpm build
+
+  build-tauri:
+    name: build-tauri (${{ matrix.platform }})
+    # 三平台构建仅在 master push 触发（chart 时已定决策）
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    runs-on: ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: ubuntu-22.04
+          - platform: windows-latest
+          - platform: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install dependencies (ubuntu only)
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10
+          cache: true
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - run: pnpm install --frozen-lockfile
+
+      # 纯构建模式（省略 tagName/releaseName/releaseId，不创建 release）；--no-bundle 跳过打包，
+      # 仅编译验证——tauri.conf.json bundle.targets=all 的 msi/deb/rpm 打包留待 Phase 5 真实验收
+      - name: tauri build (no bundle)
+        uses: tauri-apps/tauri-action@v1
+        with:
+          args: --no-bundle

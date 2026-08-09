@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "source": "trae",
+  "targets": ["claude-code", "codex", "workbuddy", "trae"],
+  "createdAt": "2026-07-20T14:30:00Z",
+  "updatedAt": "2026-08-01T09:12:00Z",
+  "extras": {
+    "trae": {
+      "allowed-tools": ["bash", "browser"],
+      "display_name": "前端审查",
+      "description_zh": "审查前端代码的 UI 规范符合性与可访问性"
+    }
+  }
+}
