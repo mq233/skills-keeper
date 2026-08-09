@@ -1,6 +1,6 @@
 # Skills Keeper 技术规划
 
-> **版本**：v1.0（2026-08-09）
+> **版本**：v1.1（2026-08-09；§8 修订：横向 Phase 改为纵向切片 S1-S6，Phase 0 已交付）
 > **状态**：决策已全部落地，本文档为权威技术规划；调研与原型资产见 `docs/research/` 与 `docs/prototypes/`
 > **决策来源**：wayfinder 地图 [技术规划（Tauri 2 + Vue + TS）](https://github.com/mq233/skills-keeper/issues/1) 的 7 条决议（#2–#8），文中以 [决议 #n](链接) 标注
 
@@ -316,16 +316,22 @@ pub enum EngineError {
 
 ## 8. 实施阶段划分
 
-> 编排依据：§7 工程基线先行 → 数据层 → 引擎核心 → 导入 → 前端 → 打磨，各阶段产出可验证增量。
+> 编排依据：§7 工程基线先行（Phase 0 已交付）→ 纵向切片 S1-S6。每一切片是「引擎 → 命令层 → 前端」完整闭环、可独立演示与验收；切片内部仍保持 Rust 单测先行（§7 测试策略），原横向阶段的验收标准全量保留、分散到各切片。
 
-| 阶段 | 范围 | 验收标准 |
+| 切片 | 范围 | 验收标准 |
 | --- | --- | --- |
-| **Phase 0 工程骨架** | create-tauri-app 初始化、目录重组（§4.1/§7）、ESLint/Prettier/rustfmt/clippy 基线、CI 三段式上线、pnpm | `pnpm tauri dev` 可启动；CI 三 Job 全绿 |
-| **Phase 1 数据层** | Vault 读取（frontmatter 解析、Sidecar 读写、slug 规则）、SQLite 迁移与三表、说明文件读取 | Rust 单测覆盖 frontmatter/Sidecar 解析与表迁移；Vault 样例可读 |
-| **Phase 2 分发引擎** | 适配器（四工具 + 注册表）、扫描器、状态判定、分发事务、快照/回滚、错误模型 | 判定矩阵全分支单测、分发/回滚 tempdir 集成测试通过；模拟工具目录端到端分发成功 |
-| **Phase 3 导入** | 识别/去重/冲突处理/临时目录原子导入 | 导入各分支（合规/冲突/重复/改名/覆盖）测试通过；工具端零副作用验证 |
-| **Phase 4 前端 MVP** | 四页视图、矩阵渲染、行展开 diff、批量条、列头分发全部、导入向导、设置页、`src/api/` invoke 封装 | Vitest 组件测试通过；mock invoke 全流程可走通 |
-| **Phase 5 打磨与发布准备** | 分发前重扫 UX 文案定稿、i18n 结构抽取、E2E 冒烟集、三平台安装包构建验证 | E2E 冒烟通过；三平台 `tauri build` 产物可安装运行 |
+| **S1 库矩阵（只读）** | SQLite 迁移与三表；Vault 读取（frontmatter 解析、Sidecar 读写、slug 规则）；扫描器与状态判定（判定矩阵全分支）；`list_skills` / `scan` / `get_status_matrix` 命令；`src/api/` invoke 封装；Skill 库矩阵视图（状态徽章、WorkBuddy 未接入列、状态摘要、手动扫描） | Rust 单测覆盖 frontmatter/Sidecar 解析、表迁移、判定矩阵全分支；Vitest 矩阵渲染组件测试；mock invoke 全流程可走通；样例 Vault 出真实矩阵 |
+| **S2 分发** | 适配器（四工具 + 注册表 + 错误模型）；分发事务（渲染 → 快照 → staging → 落盘 → 记录 → 清理）；矩阵分发交互（行勾选 / 批量条 / 列头分发全部） | 分发 tempdir 端到端测试通过（含任一步失败回滚、幂等重试）；模拟工具目录端到端分发成功；UI 分发后状态变「一致」 |
+| **S3 差异与回滚** | 行级 diff（Vault 当前 vs 工具端当前，行内展开）；快照时间线页（按工具过滤、手动/自动标注）；rollback（`.trash` 回收、deploy_records 更新） | 快照保留策略与回滚 tempdir 测试通过；时间线 → 回滚 → 状态回归「一致」 |
+| **S4 导入** | 导入引擎（扫描识别 → 去重 → 冲突处理 → 临时目录原子导入）；导入向导 UI（来源选择 → 识别结果列表 → 勾选与冲突处理 → 导入结果） | 导入各分支（合规/冲突/重复/改名/覆盖）测试通过；工具端零副作用验证；向导步骤态组件测试 |
+| **S5 说明文件与设置** | 说明文件读取与分发（复用 deploy 流程、无 frontmatter 注入）；设置页（工具启用开关、目标路径编辑、快照保留数量） | Rust 单测覆盖 instructions 解析；说明文件分发测试通过；设置持久化验证 |
+| **S6 打磨与发布准备** | 分发前重扫 UX 文案定稿；i18n 结构抽取（`data-i18n` key 迁移）；E2E 冒烟集（启动 → 库视图渲染 → 扫描）；三平台安装包构建验证 | E2E 冒烟通过；三平台 `tauri build` 产物可安装运行 |
+
+### 已完成阶段
+
+| 阶段 | 交付 | 验收结果 |
+| --- | --- | --- |
+| **Phase 0 工程骨架** | create-tauri-app 初始化、目录重组（§4.1/§7）、ESLint/Prettier/rustfmt/clippy 基线、CI 三段式上线、pnpm | `pnpm tauri dev` 可启动；CI 三 Job 全绿（2026-08-09 交付） |
 
 ## 9. 后续能力与范围外
 
