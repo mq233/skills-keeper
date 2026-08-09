@@ -1,1 +1,14 @@
-//! 命令：list_skills / list_instructions / update_skill_targets（`docs/technical-plan.md` §4.7）。
+//! 命令：list_skills（`docs/technical-plan.md` §4.7；S1 前端不调用，S4 导入器使用）。
+
+use tauri::State;
+
+use crate::commands::AppPaths;
+use crate::engine;
+use crate::engine::error::EngineError;
+use crate::engine::vault::SkillEntry;
+
+/// 全部 Skill 列表（契约：`SkillEntry[]`，invalid 含行级标记原因）。
+#[tauri::command]
+pub fn list_skills(paths: State<'_, AppPaths>) -> Result<Vec<SkillEntry>, EngineError> {
+    engine::list_skills(&paths.vault_root)
+}

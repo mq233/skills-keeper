@@ -4,3 +4,5 @@ CLAUDE.md
 CONTEXT.md
 # Rust 侧整体不归 prettier 管（含 gen/ target 生成物）
 src-tauri/
+# 锁文件格式由 pnpm 自身维护
+pnpm-lock.yaml

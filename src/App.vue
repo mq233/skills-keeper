@@ -1,60 +1,43 @@
 <script setup lang="ts">
-import { invoke } from "@tauri-apps/api/core";
-import { ref } from "vue";
+import { RouterLink, RouterView } from "vue-router";
 
-const greetMsg = ref("");
-const name = ref("");
-
-async function greet() {
-  // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-  greetMsg.value = await invoke("greet", { name: name.value });
-}
+// 左侧栏四页导航（S1：Skill 库实现，其余占位），见 docs/technical-plan.md §6.1
+const navItems = [
+  { to: "/skills", label: "Skill 库" },
+  { to: "/import", label: "导入" },
+  { to: "/snapshots", label: "快照时间线" },
+  { to: "/settings", label: "设置" },
+];
 </script>
 
 <template>
-  <main class="container">
-    <h1>Welcome to Tauri + Vue</h1>
-
-    <div class="row">
-      <a href="https://vite.dev" target="_blank">
-        <img src="/vite.svg" class="logo vite" alt="Vite logo" />
-      </a>
-      <a href="https://tauri.app" target="_blank">
-        <img src="/tauri.svg" class="logo tauri" alt="Tauri logo" />
-      </a>
-      <a href="https://vuejs.org/" target="_blank">
-        <img src="./assets/vue.svg" class="logo vue" alt="Vue logo" />
-      </a>
-    </div>
-    <p>Click on the Tauri, Vite, and Vue logos to learn more.</p>
-
-    <form class="row" @submit.prevent="greet">
-      <input id="greet-input" v-model="name" placeholder="Enter a name..." />
-      <button type="submit">Greet</button>
-    </form>
-    <p>{{ greetMsg }}</p>
-  </main>
+  <div class="app">
+    <nav class="sidebar" aria-label="主导航">
+      <h1 class="brand">Skills Keeper</h1>
+      <RouterLink
+        v-for="item in navItems"
+        :key="item.to"
+        :to="item.to"
+        class="nav-link"
+      >
+        {{ item.label }}
+      </RouterLink>
+    </nav>
+    <main class="content">
+      <RouterView />
+    </main>
+  </div>
 </template>
 
-<style scoped>
-.logo.vite:hover {
-  filter: drop-shadow(0 0 2em #747bff);
-}
-
-.logo.vue:hover {
-  filter: drop-shadow(0 0 2em #249b73);
-}
-</style>
 <style>
 :root {
-  font-family: Inter, Avenir, Helvetica, Arial, sans-serif;
-  font-size: 16px;
-  line-height: 24px;
-  font-weight: 400;
-
-  color: #0f0f0f;
-  background-color: #f6f6f6;
-
+  font-family:
+    "Segoe UI", "PingFang SC", "Microsoft YaHei", Avenir, Helvetica, Arial,
+    sans-serif;
+  font-size: 15px;
+  line-height: 1.6;
+  color: #1f2328;
+  background-color: #f6f8fa;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -62,97 +45,88 @@ async function greet() {
   -webkit-text-size-adjust: 100%;
 }
 
-.container {
+* {
+  box-sizing: border-box;
+}
+
+body {
   margin: 0;
-  padding-top: 10vh;
+}
+
+.app {
+  display: flex;
+  min-height: 100vh;
+}
+
+.sidebar {
+  flex: 0 0 200px;
   display: flex;
   flex-direction: column;
-  justify-content: center;
-  text-align: center;
+  gap: 4px;
+  padding: 16px 12px;
+  background: #ffffff;
+  border-right: 1px solid #e2e5e9;
 }
 
-.logo {
-  height: 6em;
-  padding: 1.5em;
-  will-change: filter;
-  transition: 0.75s;
+.brand {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 0 8px 12px;
+  color: #373c43;
 }
 
-.logo.tauri:hover {
-  filter: drop-shadow(0 0 2em #24c8db);
+.nav-link {
+  padding: 7px 10px;
+  border-radius: 6px;
+  color: #57606a;
+  text-decoration: none;
+  font-size: 14px;
 }
 
-.row {
-  display: flex;
-  justify-content: center;
+.nav-link:hover {
+  background: #f0f2f5;
+  color: #1f2328;
 }
 
-a {
+.nav-link.router-link-active {
+  background: #e8edf5;
+  color: #1a4fd8;
   font-weight: 500;
-  color: #646cff;
-  text-decoration: inherit;
 }
 
-a:hover {
-  color: #535bf2;
-}
-
-h1 {
-  text-align: center;
-}
-
-input,
-button {
-  border-radius: 8px;
-  border: 1px solid transparent;
-  padding: 0.6em 1.2em;
-  font-size: 1em;
-  font-weight: 500;
-  font-family: inherit;
-  color: #0f0f0f;
-  background-color: #ffffff;
-  transition: border-color 0.25s;
-  box-shadow: 0 2px 2px rgba(0, 0, 0, 0.2);
-}
-
-button {
-  cursor: pointer;
-}
-
-button:hover {
-  border-color: #396cd8;
-}
-button:active {
-  border-color: #396cd8;
-  background-color: #e8e8e8;
-}
-
-input,
-button {
-  outline: none;
-}
-
-#greet-input {
-  margin-right: 5px;
+.content {
+  flex: 1;
+  padding: 24px 32px;
+  min-width: 0;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    color: #f6f6f6;
-    background-color: #2f2f2f;
+    color: #e6e8eb;
+    background-color: #1b1e23;
   }
 
-  a:hover {
-    color: #24c8db;
+  .sidebar {
+    background: #22262c;
+    border-right-color: #33383f;
   }
 
-  input,
-  button {
-    color: #ffffff;
-    background-color: #0f0f0f98;
+  .brand {
+    color: #d4d7dc;
   }
-  button:active {
-    background-color: #0f0f0f69;
+
+  .nav-link {
+    color: #a8adb5;
+  }
+
+  .nav-link:hover {
+    background: #2c3138;
+    color: #e6e8eb;
+  }
+
+  .nav-link.router-link-active {
+    background: #2b3a55;
+    color: #7db3ff;
   }
 }
 </style>

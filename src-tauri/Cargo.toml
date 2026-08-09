@@ -23,4 +23,11 @@ tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
+# S1 选型见 docs/research/s1-deps.md：rusqlite bundled、serde_yaml_ng、blake3
+rusqlite = { version = "0.40", features = ["bundled"] }
+serde_yaml_ng = "0.10"
+blake3 = "1"
+
+[dev-dependencies]
+tempfile = "3"
 

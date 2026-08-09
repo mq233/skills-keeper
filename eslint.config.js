@@ -13,6 +13,16 @@ export default [
   ...tseslint.configs.recommended,
   ...pluginVue.configs["flat/recommended"],
 
+  // .vue 的 <script setup lang="ts"> 需用 TS parser 解析（vue-eslint-parser 底层）
+  {
+    files: ["**/*.vue"],
+    languageOptions: {
+      parserOptions: {
+        parser: tseslint.parser,
+      },
+    },
+  },
+
   // 全局编码规范：导入排序（第三方 → 内部 → 同级/父级 → 样式，同类按字母序）
   {
     files: ["**/*.{ts,vue}"],

@@ -332,6 +332,7 @@ pub enum EngineError {
 | 阶段 | 交付 | 验收结果 |
 | --- | --- | --- |
 | **Phase 0 工程骨架** | create-tauri-app 初始化、目录重组（§4.1/§7）、ESLint/Prettier/rustfmt/clippy 基线、CI 三段式上线、pnpm | `pnpm tauri dev` 可启动；CI 三 Job 全绿（2026-08-09 交付） |
+| **S1 库矩阵（只读）** | 三表迁移（user_version + 递增数组）；Vault 读取（frontmatter 三字段提取 + YAML 标量陷阱、Sidecar 容错、invalid 标记）；最小 target 层（ToolId + 默认路径，workbuddy 未接入）；扫描器（blake3 目录 hash 排除 `.skill-meta.json`）；状态判定纯函数；引擎门面 + `list_skills` / `scan` / `get_status_matrix` 三命令（`{code, message}` 中文错误）；`src/api/` 封装 + 单 Pinia store + vue-router 四页导航 + 矩阵组件；样例 Vault `examples/vault/` | cargo test 42 全绿（单测 34 + tempdir 集成 8，含样例 Vault 测试）；Vitest 27 全绿（api / store / 组件 / mock invoke 全流程）；clippy `-D warnings`、rustfmt、eslint、vue-tsc、vite build 全绿；`SKILLS_KEEPER_VAULT=examples/vault` 出真实矩阵（2026-08-09 交付） |
 
 ## 9. 后续能力与范围外
 

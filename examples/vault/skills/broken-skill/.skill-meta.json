@@ -1,0 +1,6 @@
+{
+  "schemaVersion": 1,
+  "source": null,
+  "targets": ["claude-code", "codex", "trae"],
+  "createdAt": "2026-08-05T09:00:00Z"
+}
