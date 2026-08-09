@@ -70,6 +70,11 @@
   .va .sel { accent-color: var(--blue); }
   .va .summary { display: flex; gap: 14px; font-size: 12px; color: var(--muted); margin-bottom: 14px; }
   .va .summary b { color: var(--text); }
+  /* 展开行：diff 占满整行（确认修正：不再双栏、不展示分发目标面板） */
+  .va .fulldiff { max-width: 100%; }
+  .va .fulldiff .diff { width: 100%; }
+  .va .fulldiff .diff .dline { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .va .fulldiff .diff .dline:hover { white-space: normal; }
 
   /* ================================================================
      Variant B — 技能卡片墙（Card wall + drawer）：顶部 tab + 卡片 + 右侧抽屉
@@ -96,11 +101,11 @@
   .vb .drawer .dhead { display: flex; align-items: center; gap: 10px; padding: 16px 20px; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--panel); }
   .vb .drawer .dbody { padding: 16px 20px; }
   .vb .drawer .close { margin-left: auto; }
-  .vb .batchbar { position: sticky; bottom: 0; display: none; align-items: center; gap: 12px; background: #1f2430; color: #fff;
-    padding: 10px 20px; border-radius: 10px 10px 0 0; }
-  .vb .batchbar.show { display: flex; }
-  .vb .batchbar .btn { background: #374151; border-color: #374151; color: #fff; }
-  .vb .batchbar .btn.primary { background: var(--blue); border-color: var(--blue); }
+  .batchbar { position: fixed; bottom: 0; left: 0; right: 0; display: none; align-items: center; gap: 12px; background: #1f2430; color: #fff;
+    padding: 10px 24px; z-index: 40; }
+  .batchbar.show { display: flex; }
+  .batchbar .btn { background: #374151; border-color: #374151; color: #fff; }
+  .batchbar .btn.primary { background: var(--blue); border-color: var(--blue); }
   .vb .tabs-in-card { display: flex; gap: 8px; margin-bottom: 10px; }
   .vb .tabs-in-card button { border: none; background: none; color: var(--muted); cursor: pointer; padding: 4px 0; font-size: 13px; border-bottom: 2px solid transparent; }
   .vb .tabs-in-card button.active { color: var(--blue); border-bottom-color: var(--blue); }
@@ -263,23 +268,27 @@ function diffBlock(diff) {
     )).join("") + "</div></div>";
 }
 
-/* ================= Variant A — 表格矩阵优先 ================= */
+/* ================= Variant A — 表格矩阵优先（最终形态：确认修正版） ================= */
 function viewA() {
   let rows = "";
   for (const s of SKILLS) {
     const cells = TOOLS.map(t => "<td>" + badge(s.targets[t.id]) + "</td>").join("");
+    const diffTool = s.diff ? toolName(s.diff.tool) : "未分发/无差异";
     rows += '<tr class="expandable" data-slug="' + s.slug + '"><td><input type="checkbox" class="sel" data-slug="' + s.slug + '" onclick="event.stopPropagation()"></td><td><b>' + s.name + '</b> <span class="muted" style="font-size:11px">v' + s.version + '</span></td>' + cells + "<td><span class=\"muted\" style=\"font-size:11px\">展开 ▾</span></td></tr>" +
-      '<tr class="row-detail" data-detail="' + s.slug + '"><td colspan="7"><div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;max-width:920px">' +
-      '<div><h3 style="margin-bottom:6px">内容差异（' + toolName(s.diff ? s.diff.tool : "claude-code") + '）</h3>' + diffBlock(s.diff) + '</div>' +
-      '<div><h3 style="margin-bottom:6px">分发目标（targets）</h3><div style="display:flex;flex-direction:column;gap:6px;font-size:12px">' +
-      TOOLS.filter(t => t.enabled).map(t => '<label style="display:flex;gap:8px;align-items:center"><input type="checkbox" checked> ' + t.name + '</label>').join("") +
-      "</div></div></div></td></tr>";
+      '<tr class="row-detail" data-detail="' + s.slug + '"><td colspan="7"><div class="fulldiff">' +
+      '<h3 style="margin-bottom:8px">内容差异（' + diffTool + '）</h3>' + diffBlock(s.diff) + '</div></td></tr>';
   }
   const summary = [
     ['<b>' + SKILLS.filter(s => Object.values(s.targets).includes("modified")).length + '</b> 被工具修改', "#dc2626"],
     ['<b>' + SKILLS.filter(s => Object.values(s.targets).includes("pending")).length + '</b> 待分发', "#d97706"],
     ['<b>' + SKILLS.filter(s => Object.values(s.targets).includes("missing")).length + '</b> 缺失', "#9ca3af"],
   ].map(([html]) => "<span style=\"color:#dc2626\">" + html + "</span>").join(" ");
+  // 工具列头部：分发全部按钮（一键全发到该列）
+  const ths = TOOLS.map(t =>
+    "<th>" + t.name + (t.path ? "" : " ⚠") +
+    (t.enabled
+      ? '<br><button class="btn col-deploy" data-tool="' + t.id + '" style="font-size:11px;padding:2px 8px;margin-top:5px">⇥ 分发全部</button>'
+      : "") + "</th>").join("");
   return `<div class="va">
     <aside class="side">
       <div class="logo">Skills Keeper</div>
@@ -292,20 +301,21 @@ function viewA() {
     </aside>
     <main class="main">
       <div class="view-title" data-i18n="view.library">技能库 — 状态矩阵</div>
-      <div class="view-sub">技能 × 目标工具匹配状态；展开行查看内容差异</div>
+      <div class="view-sub">技能 × 目标工具匹配状态；展开行查看内容差异；列头「分发全部」= 该工具全部技能一键分发</div>
       <div class="toolbar">
         <button class="btn">⟳ 扫描</button>
-        <button class="btn primary">一键全发（待分发 2）</button>
         <span class="spacer"></span>
         <span class="summary">${summary}</span>
       </div>
       <table class="matrix">
         <thead><tr><th style="width:28px"></th><th>技能</th>` +
-          TOOLS.map(t => "<th>" + t.name + (t.path ? "" : " ⚠") + "</th>").join("") +
+          ths +
           '<th style="width:60px"></th></tr></thead>' +
           `<tbody>${rows}</tbody>` +
         `</table>
-      <p class="muted" style="margin-top:10px;font-size:12px">⚠ WorkBuddy 未配置路径，状态列恒为「未接入」；到「设置」页配置后接入。</p>
+      <p class="muted" style="margin-top:10px;font-size:12px">⚠ WorkBuddy 未配置路径，状态列恒为「未接入」；到「设置」页配置后接入。快照与回滚入口见侧栏「快照时间线」。</p>
+      <div class="batchbar" id="batchbar-va"><span id="batchcount-va">已选 0 项</span><span style="flex:1"></span>
+        <button class="btn" id="b-cancel-va">取消</button><button class="btn primary" id="b-deploy-va">分发所选</button></div>
     </main>
   </div>`;
 }
@@ -478,11 +488,34 @@ function bindEvents() {
   }));
 }
 
-/* Variant A 交互：行展开 diff + 勾选 */
+/* Variant A 交互：行展开 diff + 勾选批量条 + 列头分发全部 */
 function bindVA() {
   document.querySelectorAll("tr.expandable").forEach(tr => tr.addEventListener("click", () => {
     const det = document.querySelector('tr.row-detail[data-detail="' + tr.dataset.slug + '"]');
     det.classList.toggle("open");
+  }));
+  // 勾选 → 底部批量条
+  const bar = document.getElementById("batchbar-va");
+  const count = document.getElementById("batchcount-va");
+  function refreshBatch() {
+    const n = document.querySelectorAll('input.sel:checked').length;
+    count.textContent = "已选 " + n + " 项";
+    bar.classList.toggle("show", n > 0);
+  }
+  document.querySelectorAll("input.sel").forEach(cb => cb.addEventListener("change", refreshBatch));
+  document.getElementById("b-cancel-va").addEventListener("click", () => {
+    document.querySelectorAll("input.sel:checked").forEach(cb => cb.checked = false);
+    refreshBatch();
+  });
+  document.getElementById("b-deploy-va").addEventListener("click", () => {
+    const n = document.querySelectorAll("input.sel:checked").length;
+    if (n > 0) { alert("原型演示：将分发所选 " + n + " 个技能到其 targets 标记的工具"); }
+  });
+  // 列头「分发全部」→ 该工具一键分发全部技能
+  document.querySelectorAll(".col-deploy").forEach(btn => btn.addEventListener("click", () => {
+    const t = btn.dataset.tool;
+    const name = TOOLS.find(x => x.id === t).name;
+    alert("原型演示：一键分发全部技能到 " + name + "（分发前自动扫描 + 快照）");
   }));
 }
 /* Variant B 交互：卡片 → 抽屉；分发勾选 → 批量条 */
