@@ -1,32 +1,7 @@
-# Skills Keeper
+# Tauri + Vue + TypeScript
 
-跨平台桌面软件，本地统一托管你的 AI 技能（Skills）与配置，一键分发到 Codex、Claude Code、Trae 等各 Agent 工具。
+This template should help get you started developing with Vue 3 and TypeScript in Vite. The template uses Vue 3 `<script setup>` SFCs, check out the [script setup docs](https://v3.vuejs.org/api/sfc-script-setup.html#sfc-script-setup) to learn more.
 
-## 核心特性
+## Recommended IDE Setup
 
-- **统一托管**：在本地单一位置集中管理所有 AI 技能与工具配置，告别散落在各工具目录下的配置文件
-- **一键分发**：将技能与配置同步分发到 Codex、Claude Code、Trae 等多个 Agent 工具
-- **差异一目了然**：直观对比各工具之间配置的差异，清楚知道每个工具当前的状态
-- **随时同步**：支持随时将本地配置同步到各工具，保持环境一致
-- **可回滚**：所有变更可追溯、可回滚，放心尝试任何配置调整
-
-## 技术栈
-
-- 跨平台桌面应用（规划中）
-
-## 目录结构
-
-```
-skills-keeper/
-├── src/          # 源代码
-├── docs/         # 文档
-└── tests/        # 测试
-```
-
-## 开发
-
-（待补充）
-
-## License
-
-（待补充）
+- [VS Code](https://code.visualstudio.com/) + [Vue - Official](https://marketplace.visualstudio.com/items?itemName=Vue.volar) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
