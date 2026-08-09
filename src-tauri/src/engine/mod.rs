@@ -29,7 +29,15 @@ use vault::SkillEntry;
 
 /// 初始化数据库：打开连接 + 执行全部迁移（S1 三表，`docs/specs/s1-matrix.md` §7）。
 /// 命令层 setup 传入 db 文件路径；引擎不依赖 Tauri。
+///
+/// 首次运行：应用数据目录可能不存在，先创建（Vault 是用户数据不自动创建——S1 只读）。
 pub fn init_db(db_path: &Path) -> EngineResult<Db> {
+    if let Some(parent) = db_path.parent() {
+        if !parent.exists() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| EngineError::Io(format!("创建数据目录失败：{e}")))?;
+        }
+    }
     let db = Db::open(db_path).map_err(|e| EngineError::Io(format!("打开数据库失败：{e}")))?;
     {
         let mut conn = db.lock();

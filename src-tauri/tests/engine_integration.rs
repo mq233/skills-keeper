@@ -194,6 +194,27 @@ fn list_skills_契约与invalid() {
 }
 
 #[test]
+fn init_db_数据目录不存在时自动创建() {
+    let temp = tempfile::tempdir().unwrap();
+    // 首次运行场景：应用数据目录（如默认 ~/.skills-keeper/）尚不存在
+    let data_dir = temp.path().join("nested/data");
+    let db_path = data_dir.join("skills-keeper.db");
+    let db = engine::init_db(&db_path).unwrap();
+    assert!(data_dir.exists(), "数据目录应被创建");
+    assert!(db_path.exists(), "db 文件应已创建");
+
+    // 创建后可正常初始化并迁移（空 Vault → 空矩阵）
+    let matrix = engine::get_status_matrix(
+        &temp.path().join("vault"),
+        &tool_roots(&temp.path().join("cc"), &temp.path().join("other")),
+        &db,
+    )
+    .unwrap();
+    assert!(matrix.rows.is_empty());
+    assert_eq!(matrix.tools.len(), 4);
+}
+
+#[test]
 fn 空vault返回空矩阵() {
     let temp = tempfile::tempdir().unwrap();
     let vault = temp.path().join("vault"); // 无 skills/ 目录
