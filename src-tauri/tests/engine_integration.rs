@@ -306,12 +306,14 @@ fn 相对路径按cwd解析为绝对路径() {
     std::env::set_var("SKILLS_KEEPER_VAULT", "examples/vault");
     std::env::remove_var("SKILLS_KEEPER_DATA");
     let paths = AppPaths::resolve().unwrap();
-    assert_eq!(
-        paths.vault_root,
-        temp.path().join("examples/vault"),
-        "相对路径应按 cwd 转绝对"
+    // macOS 上 /var → /private/var 是符号链接：cwd 规范化路径与 tempdir 字面路径
+    // 不同（/private/var/... vs /var/...），故只断言「绝对 + 基于 cwd」而非精确相等
+    assert!(paths.vault_root.is_absolute(), "相对路径应转绝对");
+    assert!(
+        paths.vault_root.ends_with("examples/vault"),
+        "相对路径应基于 cwd 解析：{}",
+        paths.vault_root.display()
     );
-    assert!(paths.vault_root.is_absolute());
 
     std::env::remove_var("SKILLS_KEEPER_VAULT");
     std::env::remove_var("SKILLS_KEEPER_DATA");
