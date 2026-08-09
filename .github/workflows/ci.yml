@@ -31,6 +31,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Tauri 2 的 Rust crate 在 Linux 编译依赖 webkit2gtk 系开发包（见 docs/research/ci-build-deps.md）
+      - name: install dependencies (ubuntu only)
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils
+
       - uses: dtolnay/rust-toolchain@stable
 
       # 必须先装工具链再恢复缓存（cache key 依赖当前 rustc 版本）
@@ -53,15 +60,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: pnpm
-
+      # pnpm/action-setup 必须先于 setup-node（setup-node 的 cache: pnpm 依赖 pnpm 已在 PATH）
       - uses: pnpm/action-setup@v6
         with:
           version: 10
           cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
 
       - run: pnpm install --frozen-lockfile
 
@@ -90,15 +98,16 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: pnpm
-
+      # pnpm/action-setup 必须先于 setup-node（setup-node 的 cache: pnpm 依赖 pnpm 已在 PATH）
       - uses: pnpm/action-setup@v6
         with:
           version: 10
           cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
 
       - uses: dtolnay/rust-toolchain@stable
         with:
