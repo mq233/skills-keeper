@@ -24,6 +24,10 @@ _Avoid_: 提示词文件、配置文件
 已接入并可分发到的 Agent 工具（Claude Code、Codex、workbuddy、Trae）。
 _Avoid_: 平台、通道、目的地
 
+**未接入（Disconnected）**：
+目标工具未配置可用的用户级目录路径（如 workbuddy 官方未公开路径、用户未配置），引擎不扫描、不可分发；状态矩阵中该列显示「未接入」并引导配置。
+_Avoid_: 未配置、停用
+
 **分发（Deploy）**：
 把技能或说明文件复制到目标工具目录的动作。
 _Avoid_: 同步（sync 保留给后续双向模型）
