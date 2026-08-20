@@ -61,8 +61,13 @@ pub struct CodexAdapter;
 
 impl CodexAdapter {
     /// 旧版兼容目录（`None` = 主目录解析失败）；分发事务查询，仅目录存在时写入第二份。
+    /// `SKILLS_KEEPER_CODEX_LEGACY` 环境变量覆盖（开发 / 测试 / 演示用，
+    /// 与 AppPaths 的 `SKILLS_KEEPER_VAULT` / `SKILLS_KEEPER_DATA` 同模式）。
     pub fn legacy_skills_dir() -> Option<PathBuf> {
-        expand_tilde("~/.codex/skills")
+        match std::env::var_os("SKILLS_KEEPER_CODEX_LEGACY") {
+            Some(p) => Some(PathBuf::from(p)),
+            None => expand_tilde("~/.codex/skills"),
+        }
     }
 }
 

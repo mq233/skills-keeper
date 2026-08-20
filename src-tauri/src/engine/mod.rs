@@ -25,8 +25,10 @@ use crate::db::{migrations, Db};
 use error::{EngineError, EngineResult};
 use scanner::ScanResult;
 use status::Status;
-use target::AdapterRegistry;
+use target::{AdapterRegistry, ToolId};
 use vault::SkillEntry;
+
+pub use deploy::{DeployFailedItem, DeployOkItem, DeployResult};
 
 /// 初始化数据库：打开连接 + 执行全部迁移（S1 三表，`docs/specs/s1-matrix.md` §7）。
 /// 命令层 setup 传入 db 文件路径；引擎不依赖 Tauri。
@@ -96,11 +98,41 @@ pub fn get_status_matrix(
                     .as_ref()
                     .is_some_and(|s| s.skills.iter().any(|sk| sk.slug == slug))
         });
-        let v = if need_v {
-            Some(scanner::hash_dir(&vault_root.join("skills").join(&slug))?)
-        } else {
-            None
-        };
+        // v 按工具计算 = 渲染产物 hash（S2 判定基准变更：render 注入/剥离会改写内容，
+        // 用 Vault 原始 hash 则 t == r 时 v != r 恒成立 → 分发后永远「待分发」）。
+        // 口径与落盘后实际 hash（hash_dir）一致：SKILL.md 文本 + 资源文件（相对路径）。
+        let mut v_by_tool: HashMap<&'static str, String> = HashMap::new();
+        if need_v {
+            let vault_skill_dir = vault_root.join("skills").join(&slug);
+            let mut resources: Vec<(String, String)> = Vec::new();
+            for rel in &entry.skill.resources {
+                let rel_str = rel.to_string_lossy().replace('\\', "/");
+                let content = std::fs::read(vault_skill_dir.join(rel))
+                    .map_err(|e| EngineError::Io(format!("读取资源文件失败：{e}")))?;
+                resources.push((rel_str, blake3::hash(&content).to_hex().to_string()));
+            }
+            for tool in &tools {
+                if !tool.connected {
+                    continue;
+                }
+                let Some(adapter) = registry.get(tool.id.parse().unwrap_or(ToolId::Workbuddy))
+                else {
+                    continue;
+                };
+                if let Ok(rendered) = adapter.render_skill(&entry.skill) {
+                    let mut files = vec![(
+                        "SKILL.md".to_string(),
+                        blake3::hash(rendered.skill_md.as_bytes())
+                            .to_hex()
+                            .to_string(),
+                    )];
+                    files.extend(resources.clone());
+                    // 排序与扫描口径一致（hash_from_files 不排序，collect_files 排序后喂入）
+                    files.sort();
+                    v_by_tool.insert(adapter.id().as_str(), scanner::hash_from_files(&files));
+                }
+            }
+        }
 
         // 逐已接入工具判定；未接入列是列级属性，单元格仅四态（spec §6）
         let mut statuses: HashMap<String, Status> = HashMap::new();
@@ -115,9 +147,10 @@ pub fn get_status_matrix(
             let r = records
                 .get(&(id.as_str().to_string(), slug.clone()))
                 .map(|rec| rec.tool_hash.clone());
+            let v = v_by_tool.get(id.as_str()).map(String::as_str);
             statuses.insert(
                 id.as_str().to_string(),
-                status::compute(t.as_deref(), r.as_deref(), v.as_deref()),
+                status::compute(t.as_deref(), r.as_deref(), v),
             );
         }
         rows.push(MatrixRow {
@@ -127,6 +160,19 @@ pub fn get_status_matrix(
     }
 
     Ok(StatusMatrix { tools, rows })
+}
+
+/// 分发事务门面：渲染 → 分发前重扫 → 自动快照 → staging → 落盘 → 记录 →
+/// 清理（部分成功结构；分发级失败整体 Err）。见 `deploy.rs` 与规格 §2。
+pub fn deploy_tool(
+    vault_root: &Path,
+    registry: &AdapterRegistry,
+    snapshots_root: &Path,
+    tool_id: ToolId,
+    slugs: &[String],
+    db: &Db,
+) -> EngineResult<DeployResult> {
+    deploy::deploy_tool(vault_root, registry, snapshots_root, tool_id, slugs, db)
 }
 
 /// 状态矩阵契约形状：`{ tools: [{id, connected}], rows: [{skill, statuses}] }`。
@@ -150,16 +196,18 @@ pub struct MatrixRow {
     pub statuses: HashMap<String, Status>,
 }
 
-/// 分发记录（deploy_records 行）。S1 只用 `tool_hash`（判定基准 r）；
-/// `vault_hash`（分发时 Vault hash）留 S2 分发记录校验使用。
-struct DeployRecord {
-    #[allow(dead_code)]
-    vault_hash: String,
-    tool_hash: String,
+/// 分发记录（deploy_records 行）。`tool_hash` = 判定基准 r（落盘后工具端 hash）；
+/// `vault_hash` = 分发时渲染产物 hash（表结构数据，S3 时间线/审计读取）。
+pub(crate) struct DeployRecord {
+    #[allow(dead_code)] // S3 快照时间线/审计读取，S2 无消费点
+    pub(crate) vault_hash: String,
+    pub(crate) tool_hash: String,
 }
 
 /// 读取 deploy_records 全部记录（S1 恒空；S2 分发写入后成为判定基准 r）。
-fn load_deploy_records(conn: &Connection) -> EngineResult<HashMap<(String, String), DeployRecord>> {
+pub(crate) fn load_deploy_records(
+    conn: &Connection,
+) -> EngineResult<HashMap<(String, String), DeployRecord>> {
     let mut stmt = conn
         .prepare("SELECT tool_id, skill_slug, vault_hash, tool_hash FROM deploy_records")
         .map_err(|e| EngineError::Internal(format!("读取分发记录失败：{e}")))?;
