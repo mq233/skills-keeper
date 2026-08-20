@@ -26,11 +26,6 @@
       "prettier --write"
     ]
   },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "husky"
-    ]
-  },
   "dependencies": {
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-opener": "^2",
