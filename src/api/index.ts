@@ -85,10 +85,16 @@ function toApiError(e: unknown): ApiError {
   return err;
 }
 
-/** 调用 Tauri 命令并统一错误解析（{code, message} → 抛带 code 的 Error） */
-async function invokeCommand<T>(command: string): Promise<T> {
+/** 调用 Tauri 命令并统一错误解析（{code, message} → 抛带 code 的 Error）；args 支持参数 */
+async function invokeCommand<T>(
+  command: string,
+  args?: Record<string, unknown>,
+): Promise<T> {
   try {
-    return await invoke<T>(command);
+    // 无参数命令保持单参数调用（契约镜像与 S1 一致）
+    return await (args === undefined
+      ? invoke<T>(command)
+      : invoke<T>(command, args));
   } catch (e) {
     throw toApiError(e);
   }
@@ -109,4 +115,37 @@ export function scan(): Promise<StatusMatrix> {
 /** 当前状态矩阵 */
 export function getStatusMatrix(): Promise<StatusMatrix> {
   return invokeCommand<StatusMatrix>("get_status_matrix");
+}
+
+// ---- S2 分发契约（docs/specs/s2-deploy.md §Implementation Decisions 3）----
+
+/** deploy 输入契约：单工具 + 显式 slug 列表（「分发全部」由前端算全集传入，引擎无特判） */
+export interface DeployRequest {
+  tool_id: string;
+  skill_slugs: string[];
+}
+
+/** 成功条目：已落盘且记录写入 */
+export interface DeployOkItem {
+  tool_id: string;
+  skill_slug: string;
+}
+
+/** 失败条目：Skill 级失败原因（message 中文可直接展示；code = 引擎错误码） */
+export interface DeployFailedItem {
+  tool_id: string;
+  skill_slug: string;
+  code: string;
+  message: string;
+}
+
+/** 分发结果（部分成功：ok/failed 分别反馈；整体 Err = 分发级失败） */
+export interface DeployResult {
+  ok: DeployOkItem[];
+  failed: DeployFailedItem[];
+}
+
+/** 分发到单个目标工具（「分发所选」= 前端对每个已接入工具依次调用） */
+export function deploy(request: DeployRequest): Promise<DeployResult> {
+  return invokeCommand<DeployResult>("deploy", { ...request });
 }

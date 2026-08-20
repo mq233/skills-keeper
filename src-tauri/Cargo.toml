@@ -27,6 +27,8 @@ thiserror = "2"
 rusqlite = { version = "0.40", features = ["bundled"] }
 serde_yaml_ng = "0.10"
 blake3 = "1"
+# S2 async 迁移：tokio 操作级锁（scan / deploy 串行，`docs/technical-plan.md` §4.7）
+tokio = { version = "1", features = ["sync"] }
 
 [dev-dependencies]
 tempfile = "3"

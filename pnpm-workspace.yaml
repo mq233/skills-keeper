@@ -1,0 +1,5 @@
+# 允许构建脚本的依赖（pnpm 11 配置位置；原 package.json pnpm.onlyBuiltDependencies 已弃用）
+allowBuilds:
+  esbuild: true
+  unrs-resolver: true
+  husky: true

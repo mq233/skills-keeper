@@ -3,7 +3,14 @@
 import { invoke } from "@tauri-apps/api/core";
 import { describe, expect, it, vi } from "vitest";
 
-import { getStatusMatrix, listSkills, scan, type ApiError } from "../api";
+import {
+  deploy,
+  getStatusMatrix,
+  listSkills,
+  scan,
+  type ApiError,
+  type DeployResult,
+} from "../api";
 import { matrixFixture } from "./fixtures";
 
 vi.mock("@tauri-apps/api/core", () => ({
@@ -46,6 +53,43 @@ describe("api 封装", () => {
     await expect(scan()).rejects.toSatisfy((e: ApiError) => {
       expect(e.code).toBe("Internal");
       expect(e.message).toBe("操作失败，请重试");
+      return true;
+    });
+  });
+
+  it("deploy 调用 deploy 命令并透传 {tool_id, skill_slugs} 参数（S2 契约）", async () => {
+    const result: DeployResult = {
+      ok: [{ tool_id: "codex", skill_slug: "greeting" }],
+      failed: [
+        {
+          tool_id: "codex",
+          skill_slug: "broken",
+          code: "InvalidSkill",
+          message: "缺少 description",
+        },
+      ],
+    };
+    invokeMock.mockResolvedValue(result);
+    await expect(
+      deploy({ tool_id: "codex", skill_slugs: ["greeting", "broken"] }),
+    ).resolves.toEqual(result);
+    expect(invokeMock).toHaveBeenCalledWith("deploy", {
+      tool_id: "codex",
+      skill_slugs: ["greeting", "broken"],
+    });
+  });
+
+  it("deploy 分发级错误（重扫中止 InvalidState）→ 抛带 code 的 Error", async () => {
+    invokeMock.mockRejectedValue({
+      code: "InvalidState",
+      message:
+        "分发前重扫发现目标工具「codex」的以下 Skill 已被外部修改：\n- codex/greeting",
+    });
+    await expect(
+      deploy({ tool_id: "codex", skill_slugs: ["greeting"] }),
+    ).rejects.toSatisfy((e: ApiError) => {
+      expect(e.code).toBe("InvalidState");
+      expect(e.message).toContain("已被外部修改");
       return true;
     });
   });

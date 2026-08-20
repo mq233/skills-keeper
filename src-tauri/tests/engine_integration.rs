@@ -11,8 +11,10 @@ use std::sync::Mutex;
 
 use skills_keeper_lib::commands::AppPaths;
 use skills_keeper_lib::engine;
+use skills_keeper_lib::engine::error::EngineError;
 use skills_keeper_lib::engine::status::Status;
-use skills_keeper_lib::engine::target::ToolId;
+use skills_keeper_lib::engine::target::{AdapterRegistry, ToolId};
+use tempfile::TempDir;
 
 /// 环境变量类测试互斥（set_var 是全局副作用，Rust 测试并发运行）。
 static ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -36,6 +38,11 @@ fn write(path: &Path, content: &str) {
 const GOOD_MD: &str =
     "---\nname: 问候助手\ndescription: 生成友好问候语\nversion: 1.0\n---\n# 内容\n";
 
+/// GOOD_MD 经 render 后的产物（name 以 slug 覆写；S2 判定基准 = 渲染产物，
+/// 模拟工具端应放置渲染后内容才判定「一致」；纯数字字符串序列化带单引号）。
+const RENDERED_MD: &str =
+    "---\nname: greeting\ndescription: 生成友好问候语\nversion: '1.0'\n---\n# 内容\n";
+
 /// 建样例 Vault：`greeting` 正常 Skill；`broken` 缺 name（invalid 分支）。
 fn make_vault(root: &Path) {
     write(&root.join("skills/greeting/SKILL.md"), GOOD_MD);
@@ -49,14 +56,14 @@ fn make_vault(root: &Path) {
     );
 }
 
-/// 注入式工具根目录：claude-code 指向模拟目录，workbuddy 未接入（None）。
-fn tool_roots(cc_root: &Path, other_root: &Path) -> engine::ToolRoots {
-    vec![
-        (ToolId::ClaudeCode, Some(cc_root.to_path_buf())),
-        (ToolId::Codex, Some(other_root.to_path_buf())),
-        (ToolId::Workbuddy, None), // 未接入
-        (ToolId::Trae, Some(other_root.to_path_buf())),
-    ]
+/// 注入式注册表：claude-code 指向模拟目录，codex/trae 指向另一模拟目录，
+/// workbuddy 无覆盖 = 未接入（None）。S2 适配器化：路径覆盖 = 测试注入。
+fn make_registry(cc_root: &Path, other_root: &Path) -> AdapterRegistry {
+    AdapterRegistry::with_overrides(HashMap::from([
+        (ToolId::ClaudeCode, cc_root.to_path_buf()),
+        (ToolId::Codex, other_root.to_path_buf()),
+        (ToolId::Trae, other_root.to_path_buf()),
+    ]))
 }
 
 #[test]
@@ -65,14 +72,15 @@ fn 契约形状_未接入列_r缺失分支() {
     let vault = temp.path().join("vault");
     make_vault(&vault);
 
-    // 模拟工具端：claude-code 存在且内容与 Vault 一致（无分发记录 → r 缺失 → t==v → 一致）
+    // 模拟工具端：claude-code 存在且内容为渲染产物（无分发记录 → r 缺失 → t==v → 一致；
+    // S2 判定基准 = 渲染产物，非 Vault 原始内容）
     let cc = temp.path().join("cc");
-    write(&cc.join("greeting/SKILL.md"), GOOD_MD);
+    write(&cc.join("greeting/SKILL.md"), RENDERED_MD);
     // codex / trae 根不存在 → 缺失
     let empty = temp.path().join("empty-tools");
 
     let db = engine::init_db(&temp.path().join("skills-keeper.db")).unwrap();
-    let matrix = engine::get_status_matrix(&vault, &tool_roots(&cc, &empty), &db).unwrap();
+    let matrix = engine::get_status_matrix(&vault, &make_registry(&cc, &empty), &db).unwrap();
 
     // tools：四列全集 + connected 标志（未接入是列级属性）
     let tools: Vec<(&str, bool)> = matrix
@@ -126,13 +134,15 @@ fn 判定链路_分发记录与变化反映() {
     let vault = temp.path().join("vault");
     make_vault(&vault);
     let cc = temp.path().join("cc");
-    write(&cc.join("greeting/SKILL.md"), GOOD_MD);
+    // 工具端为渲染产物（S2 判定基准：分发后工具端内容 = 渲染产物）
+    write(&cc.join("greeting/SKILL.md"), RENDERED_MD);
     let other = temp.path().join("other");
 
     let db = engine::init_db(&temp.path().join("skills-keeper.db")).unwrap();
-    let roots = tool_roots(&cc, &other);
+    let registry = make_registry(&cc, &other);
 
-    // 插入分发记录：模拟 S2 分发后状态（r = 工具端 hash，v_rec = 分发时 Vault hash）
+    // 插入分发记录：模拟 S2 分发后状态（r = 工具端 hash；v 记录值不参与矩阵判定，
+    // 矩阵 v 现算渲染产物 hash）
     let v = engine::scanner::hash_dir(&vault.join("skills/greeting")).unwrap();
     let t = engine::scanner::hash_dir(&cc.join("greeting")).unwrap();
     {
@@ -146,7 +156,7 @@ fn 判定链路_分发记录与变化反映() {
     }
 
     // t == r 且 v == r → 一致
-    let matrix = engine::get_status_matrix(&vault, &roots, &db).unwrap();
+    let matrix = engine::get_status_matrix(&vault, &registry, &db).unwrap();
     let greeting = matrix
         .rows
         .iter()
@@ -159,7 +169,7 @@ fn 判定链路_分发记录与变化反映() {
         &cc.join("greeting/SKILL.md"),
         "---\nname: 被改了\ndescription: x\n---\n",
     );
-    let matrix = engine::get_status_matrix(&vault, &roots, &db).unwrap();
+    let matrix = engine::get_status_matrix(&vault, &registry, &db).unwrap();
     let greeting = matrix
         .rows
         .iter()
@@ -168,12 +178,12 @@ fn 判定链路_分发记录与变化反映() {
     assert_eq!(greeting.statuses["claude-code"], Status::Modified);
 
     // 恢复工具端一致后，Vault 变化（v != r 且 t == r）→ 待分发
-    write(&cc.join("greeting/SKILL.md"), GOOD_MD);
+    write(&cc.join("greeting/SKILL.md"), RENDERED_MD);
     write(
         &vault.join("skills/greeting/SKILL.md"),
         "---\nname: 问候助手\ndescription: 更新后的描述\nversion: 1.1\n---\n",
     );
-    let matrix = engine::get_status_matrix(&vault, &roots, &db).unwrap();
+    let matrix = engine::get_status_matrix(&vault, &registry, &db).unwrap();
     let greeting = matrix
         .rows
         .iter()
@@ -188,7 +198,7 @@ fn list_skills_契约与invalid() {
     let vault = temp.path().join("vault");
     make_vault(&vault);
 
-    let entries = engine::list_skills(&vault).unwrap();
+    let entries = engine::list_skills(&vault, &AdapterRegistry::new()).unwrap();
     assert_eq!(entries.len(), 2);
     let slugs: Vec<&str> = entries.iter().map(|e| e.skill.slug.as_str()).collect();
     assert_eq!(slugs, vec!["broken", "greeting"], "按 slug 排序");
@@ -215,7 +225,7 @@ fn init_db_数据目录不存在时自动创建() {
     // 创建后可正常初始化并迁移（空 Vault → 空矩阵）
     let matrix = engine::get_status_matrix(
         &temp.path().join("vault"),
-        &tool_roots(&temp.path().join("cc"), &temp.path().join("other")),
+        &make_registry(&temp.path().join("cc"), &temp.path().join("other")),
         &db,
     )
     .unwrap();
@@ -230,7 +240,7 @@ fn 空vault返回空矩阵() {
     let db = engine::init_db(&temp.path().join("skills-keeper.db")).unwrap();
     let matrix = engine::get_status_matrix(
         &vault,
-        &tool_roots(&temp.path().join("cc"), &temp.path().join("other")),
+        &make_registry(&temp.path().join("cc"), &temp.path().join("other")),
         &db,
     )
     .unwrap();
@@ -244,14 +254,13 @@ fn 工具端完全不存在时全部缺失() {
     let vault = temp.path().join("vault");
     make_vault(&vault);
     let db = engine::init_db(&temp.path().join("skills-keeper.db")).unwrap();
-    // 全部已接入工具根均不存在
-    let roots = vec![
-        (ToolId::ClaudeCode, Some(temp.path().join("cc"))),
-        (ToolId::Codex, Some(temp.path().join("codex"))),
-        (ToolId::Workbuddy, None),
-        (ToolId::Trae, Some(temp.path().join("trae"))),
-    ];
-    let matrix = engine::get_status_matrix(&vault, &roots, &db).unwrap();
+    // 全部已接入工具根均不存在（覆盖注入，不触碰真实用户目录）
+    let registry = AdapterRegistry::with_overrides(HashMap::from([
+        (ToolId::ClaudeCode, temp.path().join("cc")),
+        (ToolId::Codex, temp.path().join("codex")),
+        (ToolId::Trae, temp.path().join("trae")),
+    ]));
+    let matrix = engine::get_status_matrix(&vault, &registry, &db).unwrap();
     for row in &matrix.rows {
         for (id, status) in &row.statuses {
             assert_eq!(
@@ -328,7 +337,7 @@ fn 契约序列化形状() {
     write(&cc.join("greeting/SKILL.md"), GOOD_MD);
     let other = temp.path().join("other");
     let db = engine::init_db(&temp.path().join("skills-keeper.db")).unwrap();
-    let matrix = engine::get_status_matrix(&vault, &tool_roots(&cc, &other), &db).unwrap();
+    let matrix = engine::get_status_matrix(&vault, &make_registry(&cc, &other), &db).unwrap();
 
     // 前端契约镜像：JSON 形状（tools 数组、rows 数组、statuses 对象、invalid 字符串/null）
     let json = serde_json::to_value(&matrix).unwrap();
@@ -360,7 +369,7 @@ fn 样例vault读取正常_覆盖展示分支() {
     let vault = repo_root.join("examples/vault");
     assert!(vault.exists(), "样例 Vault 应存在：{vault:?}");
 
-    let entries = engine::list_skills(&vault).unwrap();
+    let entries = engine::list_skills(&vault, &AdapterRegistry::new()).unwrap();
     let slugs: Vec<&str> = entries.iter().map(|e| e.skill.slug.as_str()).collect();
     assert_eq!(
         slugs,
@@ -389,4 +398,306 @@ fn 样例vault读取正常_覆盖展示分支() {
         .find(|e| e.skill.slug == "broken-skill")
         .unwrap();
     assert!(broken.invalid.as_deref().unwrap().contains("name"));
+}
+
+// ===== S2 分发事务集成测试（#33，规格 §Implementation Decisions 2）=====
+
+/// S2 分发夹具：tempdir + 样例 Vault（greeting 合规 / broken 缺 name）+ 注册表
+/// （cc / codex / trae 指向模拟目录，workbuddy 未接入）+ db + 快照根。
+/// 工具端根目录不预创建（缺失 = 首次分发场景）。
+struct DeployFixture {
+    temp: TempDir,
+    vault: PathBuf,
+    cc: PathBuf,
+    codex: PathBuf,
+    registry: AdapterRegistry,
+    db: skills_keeper_lib::db::Db,
+    snaps: PathBuf,
+}
+
+impl DeployFixture {
+    fn new() -> Self {
+        let temp = tempfile::tempdir().unwrap();
+        let vault = temp.path().join("vault");
+        make_vault(&vault);
+        let cc = temp.path().join("cc");
+        let codex = temp.path().join("codex");
+        let trae = temp.path().join("trae");
+        let registry = AdapterRegistry::with_overrides(HashMap::from([
+            (ToolId::ClaudeCode, cc.clone()),
+            (ToolId::Codex, codex.clone()),
+            (ToolId::Trae, trae),
+        ]));
+        let db = engine::init_db(&temp.path().join("skills-keeper.db")).unwrap();
+        let snaps = temp.path().join("snapshots");
+        Self {
+            temp,
+            vault,
+            cc,
+            codex,
+            registry,
+            db,
+            snaps,
+        }
+    }
+
+    fn deploy(
+        &self,
+        tool: ToolId,
+        slugs: &[&str],
+    ) -> skills_keeper_lib::engine::error::EngineResult<engine::DeployResult> {
+        let slugs: Vec<String> = slugs.iter().map(|s| s.to_string()).collect();
+        engine::deploy_tool(
+            &self.vault,
+            &self.registry,
+            &self.snaps,
+            tool,
+            &slugs,
+            &self.db,
+        )
+    }
+
+    fn matrix_status(&self, slug: &str, tool: &str) -> Status {
+        let matrix = engine::get_status_matrix(&self.vault, &self.registry, &self.db).unwrap();
+        matrix
+            .rows
+            .iter()
+            .find(|r| r.skill.skill.slug == slug)
+            .unwrap()
+            .statuses[tool]
+    }
+
+    fn snapshot_count(&self) -> i64 {
+        self.db
+            .lock()
+            .query_row("SELECT count(*) FROM snapshots", [], |r| r.get(0))
+            .unwrap()
+    }
+}
+
+#[test]
+fn 分发成功_渲染产物_记录快照_矩阵一致() {
+    let fx = DeployFixture::new();
+    let result = fx.deploy(ToolId::ClaudeCode, &["greeting"]).unwrap();
+    assert_eq!(result.ok.len(), 1);
+    assert!(result.failed.is_empty());
+
+    // 渲染产物：name 以 slug 覆写（通用注入）
+    let md = fs::read_to_string(fx.cc.join("greeting/SKILL.md")).unwrap();
+    assert!(md.contains("name: greeting"), "name 应覆写为 slug：{md}");
+
+    // deploy_records：v = 渲染产物 hash、r = 落盘实际 hash（同内容 → 相等）
+    let (v, r): (String, String) = fx
+        .db
+        .lock()
+        .query_row(
+            "SELECT vault_hash, tool_hash FROM deploy_records
+             WHERE tool_id = 'claude-code' AND skill_slug = 'greeting'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(v, r, "渲染产物 hash 与落盘 hash 应一致（判定基准变更）");
+
+    // 矩阵判定「一致」（S2 验收：分发后状态变一致）
+    assert_eq!(
+        fx.matrix_status("greeting", "claude-code"),
+        Status::Consistent
+    );
+
+    // 自动快照：表行 + 目录（首次分发工具端为空 → 快照记录「分发前状态」空目录）
+    assert_eq!(fx.snapshot_count(), 1);
+    assert!(fx.snaps.join("1").is_dir(), "快照目录存在（空快照）");
+
+    // staging 已清理（成功路径）
+    assert!(!fx.temp.path().join(".skills-keeper-staging").exists());
+}
+
+#[test]
+fn 缺name的invalid_渲染以slug覆写_分发成功() {
+    let fx = DeployFixture::new();
+    let result = fx.deploy(ToolId::ClaudeCode, &["broken"]).unwrap();
+    assert_eq!(result.ok.len(), 1, "缺 name 由 render 以 slug 覆写修复");
+    let md = fs::read_to_string(fx.cc.join("broken/SKILL.md")).unwrap();
+    assert!(md.contains("name: broken"), "name 应为 slug：{md}");
+    assert_eq!(
+        fx.matrix_status("broken", "claude-code"),
+        Status::Consistent
+    );
+}
+
+#[test]
+fn 重扫中止_被工具修改_范围外也中止() {
+    let fx = DeployFixture::new();
+    // 工具端 greeting 被外部修改（与 Vault 内容不同 → t != v、无记录 → Modified）
+    write(
+        &fx.cc.join("greeting/SKILL.md"),
+        "---\nname: 外部修改\ndescription: x\n---\n",
+    );
+    // 分发集不含 greeting（Vault 无 other）→ 范围外被修改同样中止（保护整体一致性）
+    let err = fx.deploy(ToolId::ClaudeCode, &["other"]).unwrap_err();
+    assert!(
+        matches!(err, EngineError::InvalidState(_)),
+        "重扫中止应为 InvalidState"
+    );
+    assert!(
+        err.to_string().contains("greeting"),
+        "中止提示应含被修改清单"
+    );
+    // 未快照、未落盘
+    assert_eq!(fx.snapshot_count(), 0);
+    assert!(!fx.cc.join("other").exists());
+}
+
+#[test]
+fn 缺失不中止_工具端根不存在_正常分发创建() {
+    let fx = DeployFixture::new();
+    let result = fx.deploy(ToolId::ClaudeCode, &["greeting"]).unwrap();
+    assert_eq!(result.ok.len(), 1, "工具端缺失不中止（防呆：重建恢复）");
+    assert!(fx.cc.join("greeting/SKILL.md").exists(), "工具端根被创建");
+}
+
+#[test]
+fn 部分成功_invalid拦截入failed_合规入ok() {
+    let fx = DeployFixture::new();
+    // SKILL.md 缺失的 Skill：render 后缺 description → validate 拦截 → InvalidSkill
+    write(&fx.vault.join("skills/no-md/.skill-meta.json"), "{}");
+    let result = fx
+        .deploy(ToolId::ClaudeCode, &["greeting", "no-md", "broken"])
+        .unwrap();
+    let ok_slugs: Vec<&str> = result.ok.iter().map(|i| i.skill_slug.as_str()).collect();
+    assert_eq!(ok_slugs, vec!["greeting", "broken"], "合规 + 修复项入 ok");
+    assert_eq!(result.failed.len(), 1);
+    assert_eq!(result.failed[0].skill_slug, "no-md");
+    assert_eq!(result.failed[0].code, "InvalidSkill");
+    assert!(!result.failed[0].message.is_empty(), "failed 应含中文原因");
+    assert!(!fx.cc.join("no-md").exists(), "failed 项不落盘");
+}
+
+#[test]
+fn 未接入工具_分发级config错误() {
+    let fx = DeployFixture::new();
+    let err = fx.deploy(ToolId::Workbuddy, &["greeting"]).unwrap_err();
+    assert!(
+        matches!(err, EngineError::Config(_)),
+        "未接入分发应为 Config"
+    );
+}
+
+#[test]
+fn 快照失败_分发级io中止_不落盘() {
+    let fx = DeployFixture::new();
+    fs::write(&fx.snaps, "占用").unwrap(); // 快照根是文件 → 无法建子目录
+    let err = fx.deploy(ToolId::ClaudeCode, &["greeting"]).unwrap_err();
+    assert!(matches!(err, EngineError::Io(_)), "快照失败应为 Io");
+    assert!(!fx.cc.join("greeting").exists(), "分发级失败不落盘");
+}
+
+#[test]
+fn 幂等重试_重复分发覆盖最新() {
+    let fx = DeployFixture::new();
+    fx.deploy(ToolId::ClaudeCode, &["greeting"]).unwrap();
+    // Vault 更新 → 待分发 → 重试（幂等覆盖）
+    write(
+        &fx.vault.join("skills/greeting/SKILL.md"),
+        "---\nname: 问候助手\ndescription: 更新后的描述\nversion: 1.1\n---\n",
+    );
+    let result = fx.deploy(ToolId::ClaudeCode, &["greeting"]).unwrap();
+    assert_eq!(result.ok.len(), 1, "重试应成功（幂等）");
+    let md = fs::read_to_string(fx.cc.join("greeting/SKILL.md")).unwrap();
+    assert!(md.contains("更新后的描述"), "工具端应为最新渲染产物");
+    assert_eq!(
+        fx.matrix_status("greeting", "claude-code"),
+        Status::Consistent
+    );
+}
+
+#[test]
+fn 覆盖已有目录_两阶段备份无残留() {
+    let fx = DeployFixture::new();
+    // 首次分发（工具端为空）
+    fx.deploy(ToolId::ClaudeCode, &["greeting"]).unwrap();
+    // 工具端外部写入元数据（隐藏文件不参与 hash 判定 → 不触发重扫中止）
+    write(
+        &fx.cc.join("greeting/.skill-meta.json"),
+        r#"{"external": true}"#,
+    );
+    // Vault 更新 → 再分发：工具端 = 旧渲染产物（Pending 不中止）→ 两阶段备份覆盖
+    write(
+        &fx.vault.join("skills/greeting/SKILL.md"),
+        "---\nname: 问候助手\ndescription: 更新后的描述\nversion: 1.1\n---\n",
+    );
+    let result = fx.deploy(ToolId::ClaudeCode, &["greeting"]).unwrap();
+    assert_eq!(result.ok.len(), 1);
+    let md = fs::read_to_string(fx.cc.join("greeting/SKILL.md")).unwrap();
+    assert!(md.contains("更新后的描述"), "目标应为最新渲染产物");
+    // 第二次快照全量复制工具端（含外部写入的隐藏文件——回滚需完整恢复原样）
+    assert_eq!(fx.snapshot_count(), 2);
+    assert!(
+        fx.snaps.join("2/greeting/.skill-meta.json").exists(),
+        "快照应含隐藏文件"
+    );
+    // 新落盘取代旧目录（外部元数据不残留）
+    assert!(!fx.cc.join("greeting/.skill-meta.json").exists());
+    assert!(
+        !fx.temp.path().join(".skills-keeper-staging").exists(),
+        "备份位与 staging 应清理无残留"
+    );
+}
+
+#[test]
+fn codex双目录_旧版跟随写入_不存在则跳过() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    let fx = DeployFixture::new();
+    let legacy = fx.temp.path().join("codex-legacy");
+    fs::create_dir_all(&legacy).unwrap();
+    std::env::set_var("SKILLS_KEEPER_CODEX_LEGACY", &legacy);
+
+    // 旧版存在 → 同一渲染产物写两份
+    let result = fx.deploy(ToolId::Codex, &["greeting"]).unwrap();
+    assert_eq!(result.ok.len(), 1);
+    assert!(
+        fx.codex.join("greeting/SKILL.md").exists(),
+        "新版目录应分发"
+    );
+    assert!(
+        legacy.join("greeting/SKILL.md").exists(),
+        "旧版目录应跟随写入"
+    );
+    assert_eq!(
+        fs::read_to_string(fx.codex.join("greeting/SKILL.md")).unwrap(),
+        fs::read_to_string(legacy.join("greeting/SKILL.md")).unwrap(),
+        "两份内容一致"
+    );
+
+    // 旧版不存在 → 跳过（无告警）
+    std::env::remove_var("SKILLS_KEEPER_CODEX_LEGACY");
+    let legacy2 = fx.temp.path().join("codex-legacy-none");
+    std::env::set_var("SKILLS_KEEPER_CODEX_LEGACY", &legacy2);
+    let result = fx.deploy(ToolId::Codex, &["greeting"]).unwrap();
+    assert_eq!(result.ok.len(), 1);
+    assert!(result.failed.is_empty(), "旧版目录不存在 → 跳过不告警");
+    std::env::remove_var("SKILLS_KEEPER_CODEX_LEGACY");
+}
+
+#[test]
+fn codex旧版失败_告警入failed_主分发成功() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    let fx = DeployFixture::new();
+    // 旧版指向文件（存在但不是目录 → 写入失败）
+    let legacy_file = fx.temp.path().join("legacy-file");
+    fs::write(&legacy_file, "占用").unwrap();
+    std::env::set_var("SKILLS_KEEPER_CODEX_LEGACY", &legacy_file);
+
+    let result = fx.deploy(ToolId::Codex, &["greeting"]).unwrap();
+    std::env::remove_var("SKILLS_KEEPER_CODEX_LEGACY");
+    assert_eq!(result.ok.len(), 1, "主分发成功不受旧版失败影响");
+    assert_eq!(result.failed.len(), 1, "告警承载于 failed 结构");
+    assert_eq!(result.failed[0].code, "Io");
+    assert!(
+        result.failed[0].message.contains("旧版"),
+        "告警应点名旧版目录：{}",
+        result.failed[0].message
+    );
+    assert!(fx.codex.join("greeting/SKILL.md").exists());
 }

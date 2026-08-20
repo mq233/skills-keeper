@@ -1,16 +1,23 @@
-//! 目标工具层：S1 最小路径层（ToolId + 默认 Skill 目录），适配器 trait 留 S2。
+//! 目标工具层：ToolId（纯标识）+ ToolAdapter trait + AdapterRegistry（S2 适配器层）。
 //!
-//! 设计取向：行为入 trait、路径入配置（`docs/technical-plan.md` §4.2）。
-//! S1 只读矩阵：接入判定 = 路径可得（`connected ⇔ default_skills_dir().is_some()`）；
-//! trait 化（render/validate）与用户配置覆盖留 S2/S5，本层是 S5 设置页的天然扩展点
-//! （见 `docs/specs/s1-matrix.md` §5）。
+//! 设计取向：行为入 trait、路径入配置（`docs/technical-plan.md` §4.2）；
+//! S2 决议「适配器 trait 与 render_skill 范围」——路径与接入判定移入适配器，
+//! S1 的最小路径层（`ToolId::default_skills_dir` / `connected`）收敛为注册表查询。
+//! S5 设置页换配置驱动（用户路径覆盖 = 覆盖适配器路径），本层是天然扩展点。
 
 pub mod adapters;
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use serde::Serialize;
+
+use crate::engine::error::EngineError;
+use crate::engine::vault::Skill;
+
 /// 目标工具标识（契约序列化：kebab-case，如 `claude-code`）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize)]
+/// S2 收敛为纯标识：路径与接入判定在适配器，本类型只负责 id 语义。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ToolId {
     /// Claude Code：`~/.claude/skills/`
@@ -40,21 +47,6 @@ impl ToolId {
             ToolId::Trae => "trae",
         }
     }
-
-    /// 默认用户级 Skill 目录（`~` 已展开）；`None` = 未接入（S1 无用户配置覆盖）。
-    pub fn default_skills_dir(&self) -> Option<PathBuf> {
-        match self {
-            ToolId::ClaudeCode => expand_tilde("~/.claude/skills"),
-            ToolId::Codex => expand_tilde("~/.agents/skills"),
-            ToolId::Workbuddy => None,
-            ToolId::Trae => expand_tilde("~/.trae/skills"),
-        }
-    }
-
-    /// 是否已接入（S1：路径可得即接入；未接入 = 引擎不扫描、矩阵列显示「未接入」）。
-    pub fn connected(&self) -> bool {
-        self.default_skills_dir().is_some()
-    }
 }
 
 /// 字符串 → ToolId（契约 id 解析；未知 id → Err）。
@@ -69,6 +61,116 @@ impl std::str::FromStr for ToolId {
             "trae" => Ok(ToolId::Trae),
             _ => Err(()),
         }
+    }
+}
+
+/// 渲染产物：render 输出、validate 校验、落盘复制的完整内容。
+/// `resources` 为 Skill 目录内资源文件（Vault 读取时收集，render 原样透传）；
+/// `extra_files` 为渲染生成的伴生文件（如 Codex `agents/openai.yaml`，S2 恒空预留）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RenderedSkill {
+    /// 重写后的完整 SKILL.md（frontmatter 注入/剥离后 + 正文）
+    pub skill_md: String,
+    /// 需随 Skill 复制的资源文件（相对 Skill 目录；不含 SKILL.md 与隐藏文件）
+    pub resources: Vec<PathBuf>,
+    /// 渲染生成的伴生文件（相对 Skill 目录 + 内容）
+    pub extra_files: Vec<(PathBuf, String)>,
+}
+
+/// 目标工具适配器 trait（S2 决议 A）：行为入 trait、路径入适配器。
+/// `default_skills_dir() -> None` = 未接入（引擎不扫描、不可分发）。
+/// `Send + Sync`：注册表作为 Tauri state 注入（命令层共享）。
+pub trait ToolAdapter: Send + Sync {
+    fn id(&self) -> ToolId;
+    fn default_skills_dir(&self) -> Option<PathBuf>;
+    /// 渲染 Skill 为分发产物（纯函数，无文件系统访问——资源清单来自 Skill）。
+    fn render_skill(&self, skill: &Skill) -> Result<RenderedSkill, EngineError>;
+    /// 落盘前校验（只查必败项；不合规 → `InvalidSkill`）。
+    fn validate(&self, rendered: &RenderedSkill) -> Result<(), EngineError>;
+}
+
+/// 工具端根目录解析结果（命令层 / 引擎门面使用；None = 未接入，引擎不扫描）。
+pub type ToolRoots = Vec<(ToolId, Option<PathBuf>)>;
+
+/// 适配器注册表：静态构造四适配器（含 WorkBuddy），connected 过滤由调用方按
+/// 目录可得判定。路径覆盖表 = S5 设置页用户配置的天然扩展点（覆盖适配器默认路径；
+/// S2 静态构造，测试注入自定义工具目录用）。
+pub struct AdapterRegistry {
+    adapters: Vec<Box<dyn ToolAdapter>>,
+    overrides: HashMap<ToolId, PathBuf>,
+}
+
+impl Default for AdapterRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl AdapterRegistry {
+    /// 全注册四适配器（Claude Code / Codex / WorkBuddy / Trae，矩阵列顺序）。
+    pub fn new() -> Self {
+        Self {
+            adapters: vec![
+                Box::new(adapters::ClaudeCodeAdapter),
+                Box::new(adapters::CodexAdapter),
+                Box::new(adapters::WorkbuddyAdapter),
+                Box::new(adapters::TraeAdapter),
+            ],
+            overrides: HashMap::new(),
+        }
+    }
+
+    /// 带路径覆盖构造（测试 / S5 用户配置）：覆盖表命中时以覆盖路径为准。
+    pub fn with_overrides(overrides: HashMap<ToolId, PathBuf>) -> Self {
+        let mut registry = Self::new();
+        registry.overrides = overrides;
+        registry
+    }
+
+    /// 全部适配器（矩阵列顺序）。
+    pub fn adapters(&self) -> &[Box<dyn ToolAdapter>] {
+        &self.adapters
+    }
+
+    /// 按 id 取适配器（未知 id → None）。
+    pub fn get(&self, id: ToolId) -> Option<&dyn ToolAdapter> {
+        self.adapters
+            .iter()
+            .find(|a| a.id() == id)
+            .map(|a| a.as_ref())
+    }
+
+    /// 目录解析：覆盖表优先（S5 用户配置），否则适配器默认路径。
+    fn dir_of(&self, adapter: &dyn ToolAdapter) -> Option<PathBuf> {
+        self.overrides
+            .get(&adapter.id())
+            .cloned()
+            .or_else(|| adapter.default_skills_dir())
+    }
+
+    /// 已接入适配器（路径可得；未接入 = 引擎不扫描、矩阵列显示「未接入」）。
+    pub fn connected(&self) -> Vec<&dyn ToolAdapter> {
+        self.adapters
+            .iter()
+            .filter(|a| self.dir_of(a.as_ref()).is_some())
+            .map(|a| a.as_ref())
+            .collect()
+    }
+
+    /// 工具端根目录全集（(id, Option<dir>)；None = 未接入）。
+    pub fn tool_roots(&self) -> ToolRoots {
+        self.adapters
+            .iter()
+            .map(|a| (a.id(), self.dir_of(a.as_ref())))
+            .collect()
+    }
+
+    /// 已接入工具 id 列表（Sidecar 默认 targets 合成等）。
+    pub fn all_connected_targets(&self) -> Vec<String> {
+        self.connected()
+            .iter()
+            .map(|a| a.id().as_str().to_string())
+            .collect()
     }
 }
 
@@ -119,32 +221,6 @@ mod tests {
             );
         }
         assert!(ToolId::from_str("unknown").is_err(), "未知 id 应解析失败");
-    }
-
-    #[test]
-    fn 默认路径_workbuddy未接入_trae国际版() {
-        for id in ToolId::ALL {
-            let dir = id.default_skills_dir();
-            assert_eq!(
-                dir.is_some(),
-                id.connected(),
-                "接入判定应与路径可得一致：{id:?}"
-            );
-        }
-        assert_eq!(
-            ToolId::Workbuddy.default_skills_dir(),
-            None,
-            "WorkBuddy 官方未公开路径 → 未接入"
-        );
-        for (id, tail) in [
-            (ToolId::ClaudeCode, ".claude/skills"),
-            (ToolId::Codex, ".agents/skills"),
-            (ToolId::Trae, ".trae/skills"),
-        ] {
-            let dir = id.default_skills_dir().unwrap();
-            let s = dir.to_string_lossy().replace('\\', "/");
-            assert!(s.ends_with(tail), "{id:?} 默认路径应为 ...{tail}，实际 {s}");
-        }
     }
 
     #[test]

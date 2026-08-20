@@ -110,7 +110,9 @@ fn collect_files(root: &Path) -> EngineResult<Vec<(String, String)>> {
 }
 
 /// 由（相对路径, 内容 hash）清单流式聚合目录 hash——路径参与哈希，重命名可感知。
-fn hash_from_files(files: &[(String, String)]) -> String {
+/// `pub(crate)`：S2 分发判定基准 v（渲染产物 hash）复用同一口径，保证与落盘后
+/// 实际 hash（`hash_dir`）一致。
+pub(crate) fn hash_from_files(files: &[(String, String)]) -> String {
     let mut hasher = blake3::Hasher::new();
     for (rel, hash) in files {
         hasher.update(rel.as_bytes());
