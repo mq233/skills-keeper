@@ -12,7 +12,7 @@ use std::sync::Mutex;
 use skills_keeper_lib::commands::AppPaths;
 use skills_keeper_lib::engine;
 use skills_keeper_lib::engine::status::Status;
-use skills_keeper_lib::engine::target::ToolId;
+use skills_keeper_lib::engine::target::{AdapterRegistry, ToolId};
 
 /// 环境变量类测试互斥（set_var 是全局副作用，Rust 测试并发运行）。
 static ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -49,14 +49,14 @@ fn make_vault(root: &Path) {
     );
 }
 
-/// 注入式工具根目录：claude-code 指向模拟目录，workbuddy 未接入（None）。
-fn tool_roots(cc_root: &Path, other_root: &Path) -> engine::ToolRoots {
-    vec![
-        (ToolId::ClaudeCode, Some(cc_root.to_path_buf())),
-        (ToolId::Codex, Some(other_root.to_path_buf())),
-        (ToolId::Workbuddy, None), // 未接入
-        (ToolId::Trae, Some(other_root.to_path_buf())),
-    ]
+/// 注入式注册表：claude-code 指向模拟目录，codex/trae 指向另一模拟目录，
+/// workbuddy 无覆盖 = 未接入（None）。S2 适配器化：路径覆盖 = 测试注入。
+fn make_registry(cc_root: &Path, other_root: &Path) -> AdapterRegistry {
+    AdapterRegistry::with_overrides(HashMap::from([
+        (ToolId::ClaudeCode, cc_root.to_path_buf()),
+        (ToolId::Codex, other_root.to_path_buf()),
+        (ToolId::Trae, other_root.to_path_buf()),
+    ]))
 }
 
 #[test]
@@ -72,7 +72,7 @@ fn 契约形状_未接入列_r缺失分支() {
     let empty = temp.path().join("empty-tools");
 
     let db = engine::init_db(&temp.path().join("skills-keeper.db")).unwrap();
-    let matrix = engine::get_status_matrix(&vault, &tool_roots(&cc, &empty), &db).unwrap();
+    let matrix = engine::get_status_matrix(&vault, &make_registry(&cc, &empty), &db).unwrap();
 
     // tools：四列全集 + connected 标志（未接入是列级属性）
     let tools: Vec<(&str, bool)> = matrix
@@ -130,7 +130,7 @@ fn 判定链路_分发记录与变化反映() {
     let other = temp.path().join("other");
 
     let db = engine::init_db(&temp.path().join("skills-keeper.db")).unwrap();
-    let roots = tool_roots(&cc, &other);
+    let registry = make_registry(&cc, &other);
 
     // 插入分发记录：模拟 S2 分发后状态（r = 工具端 hash，v_rec = 分发时 Vault hash）
     let v = engine::scanner::hash_dir(&vault.join("skills/greeting")).unwrap();
@@ -146,7 +146,7 @@ fn 判定链路_分发记录与变化反映() {
     }
 
     // t == r 且 v == r → 一致
-    let matrix = engine::get_status_matrix(&vault, &roots, &db).unwrap();
+    let matrix = engine::get_status_matrix(&vault, &registry, &db).unwrap();
     let greeting = matrix
         .rows
         .iter()
@@ -159,7 +159,7 @@ fn 判定链路_分发记录与变化反映() {
         &cc.join("greeting/SKILL.md"),
         "---\nname: 被改了\ndescription: x\n---\n",
     );
-    let matrix = engine::get_status_matrix(&vault, &roots, &db).unwrap();
+    let matrix = engine::get_status_matrix(&vault, &registry, &db).unwrap();
     let greeting = matrix
         .rows
         .iter()
@@ -173,7 +173,7 @@ fn 判定链路_分发记录与变化反映() {
         &vault.join("skills/greeting/SKILL.md"),
         "---\nname: 问候助手\ndescription: 更新后的描述\nversion: 1.1\n---\n",
     );
-    let matrix = engine::get_status_matrix(&vault, &roots, &db).unwrap();
+    let matrix = engine::get_status_matrix(&vault, &registry, &db).unwrap();
     let greeting = matrix
         .rows
         .iter()
@@ -188,7 +188,7 @@ fn list_skills_契约与invalid() {
     let vault = temp.path().join("vault");
     make_vault(&vault);
 
-    let entries = engine::list_skills(&vault).unwrap();
+    let entries = engine::list_skills(&vault, &AdapterRegistry::new()).unwrap();
     assert_eq!(entries.len(), 2);
     let slugs: Vec<&str> = entries.iter().map(|e| e.skill.slug.as_str()).collect();
     assert_eq!(slugs, vec!["broken", "greeting"], "按 slug 排序");
@@ -215,7 +215,7 @@ fn init_db_数据目录不存在时自动创建() {
     // 创建后可正常初始化并迁移（空 Vault → 空矩阵）
     let matrix = engine::get_status_matrix(
         &temp.path().join("vault"),
-        &tool_roots(&temp.path().join("cc"), &temp.path().join("other")),
+        &make_registry(&temp.path().join("cc"), &temp.path().join("other")),
         &db,
     )
     .unwrap();
@@ -230,7 +230,7 @@ fn 空vault返回空矩阵() {
     let db = engine::init_db(&temp.path().join("skills-keeper.db")).unwrap();
     let matrix = engine::get_status_matrix(
         &vault,
-        &tool_roots(&temp.path().join("cc"), &temp.path().join("other")),
+        &make_registry(&temp.path().join("cc"), &temp.path().join("other")),
         &db,
     )
     .unwrap();
@@ -244,14 +244,13 @@ fn 工具端完全不存在时全部缺失() {
     let vault = temp.path().join("vault");
     make_vault(&vault);
     let db = engine::init_db(&temp.path().join("skills-keeper.db")).unwrap();
-    // 全部已接入工具根均不存在
-    let roots = vec![
-        (ToolId::ClaudeCode, Some(temp.path().join("cc"))),
-        (ToolId::Codex, Some(temp.path().join("codex"))),
-        (ToolId::Workbuddy, None),
-        (ToolId::Trae, Some(temp.path().join("trae"))),
-    ];
-    let matrix = engine::get_status_matrix(&vault, &roots, &db).unwrap();
+    // 全部已接入工具根均不存在（覆盖注入，不触碰真实用户目录）
+    let registry = AdapterRegistry::with_overrides(HashMap::from([
+        (ToolId::ClaudeCode, temp.path().join("cc")),
+        (ToolId::Codex, temp.path().join("codex")),
+        (ToolId::Trae, temp.path().join("trae")),
+    ]));
+    let matrix = engine::get_status_matrix(&vault, &registry, &db).unwrap();
     for row in &matrix.rows {
         for (id, status) in &row.statuses {
             assert_eq!(
@@ -328,7 +327,7 @@ fn 契约序列化形状() {
     write(&cc.join("greeting/SKILL.md"), GOOD_MD);
     let other = temp.path().join("other");
     let db = engine::init_db(&temp.path().join("skills-keeper.db")).unwrap();
-    let matrix = engine::get_status_matrix(&vault, &tool_roots(&cc, &other), &db).unwrap();
+    let matrix = engine::get_status_matrix(&vault, &make_registry(&cc, &other), &db).unwrap();
 
     // 前端契约镜像：JSON 形状（tools 数组、rows 数组、statuses 对象、invalid 字符串/null）
     let json = serde_json::to_value(&matrix).unwrap();
@@ -360,7 +359,7 @@ fn 样例vault读取正常_覆盖展示分支() {
     let vault = repo_root.join("examples/vault");
     assert!(vault.exists(), "样例 Vault 应存在：{vault:?}");
 
-    let entries = engine::list_skills(&vault).unwrap();
+    let entries = engine::list_skills(&vault, &AdapterRegistry::new()).unwrap();
     let slugs: Vec<&str> = entries.iter().map(|e| e.skill.slug.as_str()).collect();
     assert_eq!(
         slugs,

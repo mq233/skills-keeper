@@ -1,7 +1,8 @@
 //! Rust 核心引擎门面：组合各模块，供命令层调用。
 //!
 //! 分层规则：engine 不依赖 Tauri，可纯单元测试（`docs/technical-plan.md` §2）。
-//! 工具端路径由命令层注入（`ToolRoots`），引擎只读——S5 设置页用户配置覆盖的天然扩展点。
+//! 工具端路径与接入判定由注册表（`AdapterRegistry`）提供，引擎只读——
+//! S5 设置页用户配置覆盖适配器路径的天然扩展点。
 
 pub mod deploy;
 pub mod error;
@@ -14,7 +15,7 @@ pub mod target;
 pub mod vault;
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use rusqlite::Connection;
 use serde::Serialize;
@@ -24,7 +25,7 @@ use crate::db::{migrations, Db};
 use error::{EngineError, EngineResult};
 use scanner::ScanResult;
 use status::Status;
-use target::ToolId;
+use target::AdapterRegistry;
 use vault::SkillEntry;
 
 /// 初始化数据库：打开连接 + 执行全部迁移（S1 三表，`docs/specs/s1-matrix.md` §7）。
@@ -47,35 +48,26 @@ pub fn init_db(db_path: &Path) -> EngineResult<Db> {
     Ok(db)
 }
 
-/// 工具端根目录解析结果（命令层注入；None = 未接入，引擎不扫描）。
-pub type ToolRoots = Vec<(ToolId, Option<PathBuf>)>;
-
-/// S1 默认工具端根目录：`ToolId::default_skills_dir()`（`~` 展开；
-/// WorkBuddy 官方未公开路径 → None = 未接入）。S5 设置页用户配置覆盖此函数。
-pub fn default_tool_roots() -> ToolRoots {
-    ToolId::ALL
-        .iter()
-        .map(|id| (*id, id.default_skills_dir()))
-        .collect()
-}
-
 /// Skill 列表（契约 `list_skills` → `SkillEntry[]`；S1 前端不调用，S4 导入器使用）。
-pub fn list_skills(vault_root: &Path) -> EngineResult<Vec<SkillEntry>> {
-    vault::list_skills(vault_root)
+/// Sidecar 默认 targets 由注册表已接入工具合成（S2 适配器化）。
+pub fn list_skills(vault_root: &Path, registry: &AdapterRegistry) -> EngineResult<Vec<SkillEntry>> {
+    vault::list_skills(vault_root, &registry.all_connected_targets())
 }
 
 /// 状态矩阵（契约 `get_status_matrix` / `scan` 同形状）：
 /// 读取 Vault → 逐工具扫描（未接入跳过）→ deploy_records 比对 → 判定矩阵全分支。
+/// 工具端路径与接入判定来自注册表（S2 适配器化；S5 设置页用户配置覆盖适配器路径）。
 pub fn get_status_matrix(
     vault_root: &Path,
-    tool_roots: &ToolRoots,
+    registry: &AdapterRegistry,
     db: &Db,
 ) -> EngineResult<StatusMatrix> {
-    let entries = vault::list_skills(vault_root)?;
+    let entries = vault::list_skills(vault_root, &registry.all_connected_targets())?;
+    let tool_roots = registry.tool_roots();
 
     // 逐工具扫描（S1 全量；v 惰性计算为优化意图，spec §8 从简）
     let mut scans: HashMap<&'static str, Option<ScanResult>> = HashMap::new();
-    for (id, root) in tool_roots {
+    for (id, root) in &tool_roots {
         let scan = match root {
             Some(dir) => scanner::scan_tool(dir)?,
             None => None, // 未接入：不扫描
@@ -112,7 +104,7 @@ pub fn get_status_matrix(
 
         // 逐已接入工具判定；未接入列是列级属性，单元格仅四态（spec §6）
         let mut statuses: HashMap<String, Status> = HashMap::new();
-        for (id, root) in tool_roots {
+        for (id, root) in &tool_roots {
             if root.is_none() {
                 continue;
             }

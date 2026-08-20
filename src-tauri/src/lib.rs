@@ -11,11 +11,13 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
-            // S1：路径解析（环境变量覆盖）→ 初始化 db（三表迁移）→ 注入 state
+            // S1：路径解析（环境变量覆盖）→ 初始化 db（三表迁移）→ 注入 state；
+            // S2：适配器注册表（静态构造四适配器，S5 设置页换配置驱动）
             let paths = AppPaths::resolve()?;
             let db = engine::init_db(&paths.data_dir.join("skills-keeper.db"))?;
             app.manage(paths);
             app.manage(db);
+            app.manage(engine::target::AdapterRegistry::new());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
