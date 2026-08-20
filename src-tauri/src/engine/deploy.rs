@@ -414,3 +414,63 @@ fn now_secs() -> String {
         .map(|d| d.as_secs().to_string())
         .unwrap_or_else(|_| "0".to_string())
 }
+
+#[cfg(test)]
+mod tests {
+    #![allow(non_snake_case)] // 测试函数名用中文 + 可读性命名（非 snake_case）
+
+    use super::*;
+    use tempfile::TempDir;
+
+    fn write(path: &Path, content: &str) {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        fs::write(path, content).unwrap();
+    }
+
+    #[test]
+    fn 落盘失败_备份回原位_不残留() {
+        let temp = TempDir::new().unwrap();
+        let staging_root = temp.path().join("staging");
+        let stage = staging_root.join("skill-a");
+        let target = temp.path().join("tools").join("skill-a");
+        write(&stage.join("SKILL.md"), "新内容");
+        write(&target.join("SKILL.md"), "旧内容");
+
+        // 模拟：stage 在 rename 前被外部删除 → rename 失败（非 EXDEV）
+        fs::remove_dir_all(&stage).unwrap();
+        let err = deploy_one(&stage, &target, &staging_root).unwrap_err();
+        assert!(matches!(err, EngineError::Io(_)), "落盘失败应为 Io");
+        // 备份回原位：目标仍是旧内容、备份内容无残留（.backup 目录本身保留由 staging 清理兜底）
+        assert!(target.join("SKILL.md").exists(), "目标应恢复旧内容");
+        assert_eq!(
+            fs::read_to_string(target.join("SKILL.md")).unwrap(),
+            "旧内容"
+        );
+        assert!(
+            !staging_root.join(".backup").join("skill-a").exists(),
+            "备份内容应已移回原位"
+        );
+    }
+
+    #[test]
+    fn 备份目录创建失败_目标不动() {
+        let temp = TempDir::new().unwrap();
+        let staging_root = temp.path().join("staging");
+        let stage = staging_root.join("skill-a");
+        let target = temp.path().join("tools").join("skill-a");
+        write(&stage.join("SKILL.md"), "新内容");
+        write(&target.join("SKILL.md"), "旧内容");
+        // 备份位被文件占用 → 备份目录创建失败 → 目标保持原样
+        write(&staging_root.join(".backup"), "占用");
+
+        let err = deploy_one(&stage, &target, &staging_root).unwrap_err();
+        assert!(matches!(err, EngineError::Io(_)));
+        assert_eq!(
+            fs::read_to_string(target.join("SKILL.md")).unwrap(),
+            "旧内容",
+            "备份失败时目标不动"
+        );
+    }
+}
