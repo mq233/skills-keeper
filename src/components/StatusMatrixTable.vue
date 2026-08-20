@@ -2,12 +2,22 @@
 import { TOOL_LABELS, type MatrixRow, type ToolInfo } from "../api";
 import StatusBadge from "./StatusBadge.vue";
 
-// 矩阵表格：行 = Skill（名称 / 版本 / 描述 / invalid 标记），列 = 目标工具（状态徽章）。
+// 矩阵表格：行 = Skill（勾选 / 名称 / 版本 / 描述 / invalid 标记），
+// 列 = 目标工具（状态徽章 + 已接入列头「分发全部」）。
 // 未接入列是列级属性：列头显示「未接入」+ 配置提示，单元格仅四态（spec §6）。
-// S2 列头「分发全部」按钮占位、S3 行内 diff 展开占位——此处不实现。
+// S3 行内 diff 展开占位——此处不实现。
 defineProps<{
   tools: ToolInfo[];
   rows: MatrixRow[];
+  /** 行勾选（会话态 Set，S2） */
+  selectedSlugs: Set<string>;
+  /** 分发中禁用勾选与分发按钮 */
+  deploying: boolean;
+}>();
+
+const emit = defineEmits<{
+  (e: "toggle-select", slug: string): void;
+  (e: "deploy-all", toolId: string): void;
 }>();
 
 /** 契约工具 id → 显示名（未知 id 原样兜底） */
@@ -20,11 +30,21 @@ function toolLabel(id: string): string {
   <table class="matrix" data-testid="status-matrix">
     <thead>
       <tr>
+        <th class="select-head" aria-label="选择"></th>
         <th class="skill-head">Skill</th>
         <th v-for="tool in tools" :key="tool.id" class="tool-head">
           <span class="tool-label">{{ toolLabel(tool.id) }}</span>
+          <button
+            v-if="tool.connected"
+            class="deploy-all"
+            :disabled="deploying"
+            data-testid="deploy-all"
+            @click="emit('deploy-all', tool.id)"
+          >
+            分发全部
+          </button>
           <span
-            v-if="!tool.connected"
+            v-else
             class="disconnected"
             title="未配置可用的用户级目录路径，可在设置页配置后接入"
             data-testid="disconnected-col"
@@ -43,6 +63,17 @@ function toolLabel(id: string): string {
         :key="entry.skill.slug"
         data-testid="matrix-row"
       >
+        <td class="select-cell">
+          <input
+            type="checkbox"
+            class="row-select"
+            :checked="selectedSlugs.has(entry.skill.slug)"
+            :disabled="deploying"
+            :data-testid="`select-${entry.skill.slug}`"
+            aria-label="选择此行分发"
+            @change="emit('toggle-select', entry.skill.slug)"
+          />
+        </td>
         <td class="skill-cell">
           <div class="skill-name">
             <span class="name">{{ entry.skill.name || entry.skill.slug }}</span>
@@ -136,6 +167,46 @@ tbody tr:last-child td {
 
 .tool-label {
   display: block;
+}
+
+.deploy-all {
+  display: block;
+  margin-top: 4px;
+  padding: 2px 10px;
+  font-size: 12px;
+  border: 1px solid #d0d7de;
+  border-radius: 6px;
+  background: #f6f8fa;
+  color: #373c43;
+  cursor: pointer;
+}
+
+.deploy-all:hover:not(:disabled) {
+  background: #eaeef2;
+}
+
+.deploy-all:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.select-head {
+  width: 32px;
+}
+
+.select-cell {
+  text-align: center;
+  padding: 10px 6px;
+}
+
+.row-select {
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
+}
+
+.row-select:disabled {
+  cursor: not-allowed;
 }
 
 .disconnected {
